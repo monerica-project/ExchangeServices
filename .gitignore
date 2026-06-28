@@ -1,0 +1,45 @@
+# ───────────────────────────── Build output ─────────────────────────────
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.dll
+*.pdb
+
+# ──────────────────────── Secrets / sensitive config ─────────────────────
+# Exchange API keys and any other credentials must NEVER be committed. The
+# committed appsettings.json files carry blank placeholders only; real keys go
+# in *.Secrets.json (or env vars) which stay local. These patterns are repo-wide
+# so they cover the console app and any future project.
+**/appsettings.Secrets.json
+**/appsettings.*.Secrets.json
+**/secrets.json
+**/*.secrets.json
+**/secrets.*.json
+
+# Environment / dotenv files
+.env
+.env.*
+*.env
+
+# .NET user-secrets (if ever stored in-tree)
+**/usersecrets.json
+
+# Certificates / private keys
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+
+# ───────────────────────────── IDE / OS ─────────────────────────────────
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.DotSettings.user
+.DS_Store
+Thumbs.db

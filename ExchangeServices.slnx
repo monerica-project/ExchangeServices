@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ExchangeServices/ExchangeServices.csproj" />
+  <Project Path="ExchangeServices.Console/ExchangeServices.Console.csproj" />
+</Solution>
