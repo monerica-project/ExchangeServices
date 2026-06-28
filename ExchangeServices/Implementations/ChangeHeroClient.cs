@@ -47,36 +47,59 @@ public sealed class ChangeHeroClient : IChangeHeroClient
         opt = options.Value;
     }
 
-    // ── SELL: 1 XMR → USDT ───────────────────────────────────────────────────
+    // Resolve an asset to ChangeHero's internal code. PriceService resolves the
+    // exact code into AssetRef.ExchangeId (from getCurrenciesFull) — use it when
+    // present; otherwise fall back to the configured XMR/USDT codes or the lowercased
+    // ticker. This lets the client price ANY pair (XMR/USDT, XMR/BTC, XMR/ETH, …)
+    // rather than being hardcoded to XMR/USDT.
+    private string Code(AssetRef a)
+    {
+        if (!string.IsNullOrWhiteSpace(a.ExchangeId)) return a.ExchangeId!.Trim().ToLowerInvariant();
+        var t = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        if (t == "XMR") return opt.XmrCode;
+        if (t == "USDT") return opt.UsdtCode;
+        return t.ToLowerInvariant();
+    }
+
+    // ── SELL: 1 Base → Quote (e.g. XMR → USDT/BTC/ETH) ───────────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var result = await GetExchangeAmountAsync(opt.XmrCode, opt.UsdtCode, 1m, ct);
+        var from = Code(query.Base);
+        var to = Code(query.Quote);
+
+        var result = await GetExchangeAmountAsync(from, to, 1m, ct);
         if (result is > 0m)
             return MakeResult(query, result.Value);
 
         // amount=1 may be below minimum — fetch min and retry
-        var min = await GetMinAmountAsync(opt.XmrCode, opt.UsdtCode, ct);
+        var min = await GetMinAmountAsync(from, to, ct);
         if (min is null or <= 0m) return null;
 
         var probe = min.Value * 1.1m;
-        var result2 = await GetExchangeAmountAsync(opt.XmrCode, opt.UsdtCode, probe, ct);
+        var result2 = await GetExchangeAmountAsync(from, to, probe, ct);
         if (result2 is null or <= 0m) return null;
 
         return MakeResult(query, result2.Value / probe);
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    // ── BUY: Quote → Base (e.g. USDT → XMR) ──────────────────────────────────
+    // NB: ChangeHero has XMR outbound disabled (enabledTo=false), so any *->XMR
+    // quote is rejected — i.e. you cannot BUY Monero there. This returns null for
+    // XMR (and any other receive-disabled asset); it works for normal coins.
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var probe = opt.BuyProbeAmountUsdt;
-        var result = await GetExchangeAmountAsync(opt.UsdtCode, opt.XmrCode, probe, ct);
+        var from = Code(query.Quote);   // spend the quote
+        var to = Code(query.Base);      // receive the base
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+
+        var result = await GetExchangeAmountAsync(from, to, probe, ct);
 
         if (result is null or <= 0m)
         {
-            var min = await GetMinAmountAsync(opt.UsdtCode, opt.XmrCode, ct);
+            var min = await GetMinAmountAsync(from, to, ct);
             if (min is null or <= 0m) return null;
             probe = min.Value * 1.1m;
-            result = await GetExchangeAmountAsync(opt.UsdtCode, opt.XmrCode, probe, ct);
+            result = await GetExchangeAmountAsync(from, to, probe, ct);
             if (result is null or <= 0m) return null;
         }
 
@@ -84,8 +107,51 @@ public sealed class ChangeHeroClient : IChangeHeroClient
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────
-    public Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExchangeCurrency>>(Array.Empty<ExchangeCurrency>());
+    // getCurrenciesFull returns [{ name, publicTicker, enabled, protocol, blockchain, ... }].
+    // `name` is ChangeHero's internal code (e.g. "adabsc"); `publicTicker` is the
+    // standard symbol (e.g. "ADA"); `protocol` is the network (ERC20, TRC20, XMR...).
+    public async Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
+    {
+        var body = await RpcAsync("getCurrenciesFull", new { }, ct);
+        if (body is null) return Array.Empty<ExchangeCurrency>();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("result", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return Array.Empty<ExchangeCurrency>();
+
+            var list = new List<ExchangeCurrency>();
+            foreach (var el in arr.EnumerateArray())
+            {
+                if (el.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.False)
+                    continue;
+
+                var code = GetStr(el, "name");
+                var ticker = GetStr(el, "publicTicker") ?? code;
+                if (string.IsNullOrWhiteSpace(ticker)) continue;
+
+                var network = GetStr(el, "protocol");
+                if (string.IsNullOrWhiteSpace(network)) network = GetStr(el, "blockchain") ?? "";
+
+                list.Add(new ExchangeCurrency(
+                    ExchangeId: (code ?? ticker).Trim().ToLowerInvariant(),
+                    Ticker: ticker.Trim().ToUpperInvariant(),
+                    Network: network.Trim()));
+            }
+
+            return list
+                .GroupBy(x => x.ExchangeId, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .OrderBy(x => x.Ticker)
+                .ThenBy(x => x.Network)
+                .ToList();
+        }
+        catch { return Array.Empty<ExchangeCurrency>(); }
+    }
+
+    private static string? GetStr(JsonElement el, string name)
+        => el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 
     // ── RPC helpers ───────────────────────────────────────────────────────────
 
@@ -155,18 +221,19 @@ public sealed class ChangeHeroClient : IChangeHeroClient
             @params
         });
 
-        // HMAC-SHA512 signature: sign the raw JSON body with the secret key
-        var sign = SignPayload(payload, opt.ApiSecret);
-
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
-
-        Console.WriteLine($"[CHANGEHERO] {method} → POST {opt.BaseUrl}");
 
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, opt.BaseUrl);
             req.Headers.TryAddWithoutValidation("api-key", opt.ApiKey);
-            req.Headers.TryAddWithoutValidation("sign", sign);
+            // The read methods we use (getCurrenciesFull, getExchangeAmount, getMinAmount)
+            // authenticate with the api-key alone. Only sign when a secret is configured —
+            // a wrong/empty signature would otherwise be rejected.
+            if (!string.IsNullOrWhiteSpace(opt.ApiSecret))
+                req.Headers.TryAddWithoutValidation("sign", SignPayload(payload, opt.ApiSecret));
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                req.Headers.TryAddWithoutValidation("User-Agent", opt.UserAgent);
             req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
             var sendTask = _http.SendAsync(req, ct);

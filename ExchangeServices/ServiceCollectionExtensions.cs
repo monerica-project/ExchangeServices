@@ -50,9 +50,10 @@ public static class ServiceCollectionExtensions
         services.AddGhostSwap(config);
         services.AddWizardSwap(config);
         services.AddNexchange(config);
+        services.AddExwell(config);
 
 
-        //  services.AddChangeHero(config);
+        services.AddChangeHero(config);
 
         //        services.AddDevilExchange(config);
 
@@ -60,7 +61,7 @@ public static class ServiceCollectionExtensions
         // services.AddQuickEx(config); // auth issues
 
         // auth issues 
-        //services.AddSwapuz(config);
+        services.AddSwapuz(config);
 
 
 
@@ -74,6 +75,24 @@ public static class ServiceCollectionExtensions
 
         // services.AddXChange(config);
         //
+        return services;
+    }
+
+    public static IServiceCollection AddExwell(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<ExwellOptions>(config.GetSection("Exwell"));
+
+        services.AddHttpClient<IExwellClient, ExwellClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<ExwellOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = Timeout.InfiniteTimeSpan; // per-request timeout handled in the client
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IExwellClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IExwellClient>());
+        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IExwellClient>());
+
         return services;
     }
 
@@ -458,10 +477,15 @@ public static class ServiceCollectionExtensions
         services.Configure<SwapuzOptions>(
         config.GetSection("Swapuz"));
 
-        services.AddHttpClient<ISwapuzClient, SwapuzClient>(client =>
+        services.AddHttpClient<ISwapuzClient, SwapuzClient>((sp, client) =>
         {
+            var opt = sp.GetRequiredService<IOptions<SwapuzOptions>>().Value;
             client.BaseAddress = new Uri(
-                config["Swapuz:BaseUrl"] ?? "https://api.swapuz.com");
+                (string.IsNullOrWhiteSpace(opt.BaseUrl) ? "https://api.swapuz.com" : opt.BaseUrl));
+            // api.swapuz.com returns 403 to requests with no User-Agent — this was the
+            // "auth issue" that had Swapuz disabled. Set a UA so requests pass.
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
         });
 
         // Register as both price and currency API (DI will resolve all IExchangePriceApi etc.)

@@ -44,10 +44,12 @@ public sealed class SwapuzClient : ISwapuzClient
 
         Console.WriteLine($"[SWAPUZ SELL] from={fromTicker}/{fromNet}, to={toTicker}/{toNet}");
 
+        // amount=1, so `result` is the net amount of `to` received for 1 `from` —
+        // i.e. the per-unit sell price (post-fee), consistent with the buy side.
         var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, 1m, ct);
-        if (rate is null || rate.Rate <= 0)
+        if (rate is null || rate.Result <= 0)
         {
-            Console.WriteLine("[SWAPUZ SELL] rate null or zero");
+            Console.WriteLine("[SWAPUZ SELL] rate null or result zero");
             return null;
         }
 
@@ -55,7 +57,7 @@ public sealed class SwapuzClient : ISwapuzClient
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: rate.Rate,
+            Price: rate.Result,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null
@@ -72,7 +74,12 @@ public sealed class SwapuzClient : ISwapuzClient
 
         Console.WriteLine($"[SWAPUZ BUY] from={usdtTicker}/{usdtNet}, to={xmrTicker}/{xmrNet}");
 
-        var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, 200m, ct);
+        // Probe in the QUOTE currency. PriceService sets ProbeAmount per quote
+        // (e.g. 0.01 BTC, 0.3 ETH); default 200 suits USDT. Using a fixed 200 sent
+        // "200 BTC" on the BTC pair, which exceeds the max and made buy fail → the
+        // pair showed sell-only.
+        var probe = query.ProbeAmount ?? 200m;
+        var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, probe, ct);
         if (rate is null || rate.Result <= 0)
         {
             Console.WriteLine("[SWAPUZ BUY] rate null or result zero");

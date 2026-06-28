@@ -7,6 +7,9 @@ public sealed class ChangeHeroOptions
     public string BaseUrl { get; set; } = "https://api.changehero.io/v2/";
     public string SiteName { get; set; } = "ChangeHero";
     public string? SiteUrl { get; set; } = "https://changehero.io";
+    // Sent on every request; the API is behind Cloudflare which can block a
+    // missing/default user agent.
+    public string UserAgent { get; set; } = "Monerica/1.0";
     public char PrivacyLevel { get; set; } = 'C';
     public int RequestTimeoutSeconds { get; set; } = 10;
 

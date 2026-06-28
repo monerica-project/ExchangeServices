@@ -12,7 +12,7 @@ public sealed class NexchangeOptions
 
     public string BaseUrl { get; set; } = "https://api.n.exchange/en/api/v2";
     public string SiteName { get; set; } = "n.exchange";
-    public string? SiteUrl { get; set; } = "https://n.exchange";
+    public string? SiteUrl { get; set; } = "https://n.exchange/?ref=monerica";
     public string? UserAgent { get; set; }
     public int TimeoutSeconds { get; set; } = 12;
 
