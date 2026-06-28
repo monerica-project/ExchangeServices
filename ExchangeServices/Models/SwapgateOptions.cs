@@ -7,6 +7,8 @@ public sealed class SwapgateOptions
     public string? SiteUrl { get; set; } = "https://swapgate.io";
     public char PrivacyLevel { get; set; } = 'B';
     public int RequestTimeoutSeconds { get; set; } = 10;
+    // Required: swapgate.io returns 403/Forbidden for requests with no User-Agent.
+    public string UserAgent { get; set; } = "Monerica/1.0";
 
     public string XmrCurrency { get; set; } = "XMR";
     public string XmrNetwork { get; set; } = "XMR";

@@ -48,77 +48,156 @@ public sealed class SwapgateClient : ISwapgateClient
         opt = options.Value;
     }
 
-    // ── SELL: XMR → USDT ───────────────────────────────────────────────────
+    // ── Instrument cache + resolution ───────────────────────────────────────────
+    private readonly record struct Instrument(string Cur, string Net, string Type);
+    private readonly SemaphoreSlim _instrLock = new(1, 1);
+    private List<Instrument>? _instruments;
+    private DateTime _instrumentsAt = DateTime.MinValue;
+    private static readonly TimeSpan InstrumentTtl = TimeSpan.FromHours(4);
+
+    private async Task<List<Instrument>> GetInstrumentsAsync(CancellationToken ct)
+    {
+        if (_instruments is not null && DateTime.UtcNow - _instrumentsAt < InstrumentTtl) return _instruments;
+        await _instrLock.WaitAsync(ct);
+        try
+        {
+            if (_instruments is not null && DateTime.UtcNow - _instrumentsAt < InstrumentTtl) return _instruments;
+
+            var (body, status) = await SendAsync("api/v1/instruments/public", ct);
+            var list = new List<Instrument>();
+            if (body is not null && status is >= 200 and < 300)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(body);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                        foreach (var el in doc.RootElement.EnumerateArray())
+                        {
+                            var cur = GetStr(el, "currencyTitle");
+                            if (string.IsNullOrWhiteSpace(cur)) continue;
+                            list.Add(new Instrument(cur.Trim(), (GetStr(el, "networkTitle") ?? "").Trim(),
+                                (GetStr(el, "instrumentType") ?? "").Trim()));
+                        }
+                }
+                catch { /* keep empty */ }
+            }
+            if (list.Count > 0) { _instruments = list; _instrumentsAt = DateTime.UtcNow; }
+            return _instruments ?? list;
+        }
+        finally { _instrLock.Release(); }
+    }
+
+    // Map an AssetRef (ticker + optional network) to Swapgate's (currencyTitle, networkTitle).
+    private static (string Currency, string Network)? Resolve(List<Instrument> instruments, AssetRef a)
+    {
+        var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        if (ticker.Length == 0) return null;
+
+        var matches = instruments.Where(i =>
+            i.Cur.Equals(ticker, StringComparison.OrdinalIgnoreCase) &&
+            i.Type.Equals("crypto", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (matches.Count == 0)
+            return (ticker, string.IsNullOrWhiteSpace(a.Network) ? ticker : a.Network!.Trim());
+
+        if (!string.IsNullOrWhiteSpace(a.Network))
+        {
+            var want = NormNet(a.Network!);
+            var m = matches.FirstOrDefault(i => NormNet(i.Net) == want);
+            if (!m.Equals(default(Instrument))) return (m.Cur, m.Net);
+        }
+
+        // No network (or no match): prefer the native chain (network == ticker),
+        // then ERC20, then TRC20, then whatever's first.
+        var pref = matches.OrderBy(i =>
+            i.Net.Equals(i.Cur, StringComparison.OrdinalIgnoreCase) ? 0 :
+            NormNet(i.Net) == "erc20" ? 1 :
+            NormNet(i.Net) == "trc20" ? 2 : 3).First();
+        return (pref.Cur, pref.Net);
+    }
+
+    private static string NormNet(string n) => n.Trim().ToLowerInvariant() switch
+    {
+        "tron" or "trx" or "trc20" => "trc20",
+        "ethereum" or "eth" or "erc20" => "erc20",
+        "binance smart chain" or "bsc" or "bep20" => "bep20",
+        "solana" or "sol" => "sol",
+        var x => x,
+    };
+
+    // ── SELL: Base → Quote (XMR → USDT/BTC/ETH) ──────────────────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var probe = opt.SellProbeAmountXmr;
+        var instruments = await GetInstrumentsAsync(ct);
+        var baseI = Resolve(instruments, query.Base);
+        var quoteI = Resolve(instruments, query.Quote);
+        if (baseI is null || quoteI is null) return null;
 
+        var probe = opt.SellProbeAmountXmr;  // probe is in the base (XMR) currency
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
-            fromCurrency: opt.XmrCurrency,
-            fromNetwork: opt.XmrNetwork,
-            toCurrency: opt.UsdtCurrency,
-            toNetwork: opt.UsdtNetwork,
-            depositAmount: probe,
-            ct);
+            baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, ct);
 
         if (amountToGet is null && minRequired is > 0m)
         {
             probe = minRequired.Value * 1.1m;
             (amountToGet, _) = await GetRateWithMinAsync(
-                fromCurrency: opt.XmrCurrency,
-                fromNetwork: opt.XmrNetwork,
-                toCurrency: opt.UsdtCurrency,
-                toNetwork: opt.UsdtNetwork,
-                depositAmount: probe,
-                ct);
+                baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, ct);
         }
 
         if (amountToGet is null || amountToGet <= 0m) return null;
 
-        var sellPrice = amountToGet.Value / probe;
-        if (sellPrice <= 0m) return null;
-
-        return MakeResult(query, sellPrice);
+        var sellPrice = amountToGet.Value / probe;  // quote received per 1 base
+        return sellPrice <= 0m ? null : MakeResult(query, sellPrice);
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var probe = opt.BuyProbeAmountUsdt;
+        var instruments = await GetInstrumentsAsync(ct);
+        var baseI = Resolve(instruments, query.Base);
+        var quoteI = Resolve(instruments, query.Quote);
+        if (baseI is null || quoteI is null) return null;
 
+        // Probe is in the QUOTE currency (PriceService sets it per quote: 0.01 BTC, 0.3 ETH; default USDT).
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
-            fromCurrency: opt.UsdtCurrency,
-            fromNetwork: opt.UsdtNetwork,
-            toCurrency: opt.XmrCurrency,
-            toNetwork: opt.XmrNetwork,
-            depositAmount: probe,
-            ct);
+            quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, ct);
 
-        // If probe was below minimum, retry with 110% of the required minimum
         if (amountToGet is null && minRequired is > 0m)
         {
             probe = minRequired.Value * 1.1m;
             (amountToGet, _) = await GetRateWithMinAsync(
-                fromCurrency: opt.UsdtCurrency,
-                fromNetwork: opt.UsdtNetwork,
-                toCurrency: opt.XmrCurrency,
-                toNetwork: opt.XmrNetwork,
-                depositAmount: probe,
-                ct);
+                quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, ct);
         }
 
         if (amountToGet is null || amountToGet <= 0m) return null;
 
-        // amountToGet = XMR received for probe USDT → divide to get USDT per 1 XMR
+        // amountToGet = base received for `probe` of quote → quote per 1 base.
         var buyPrice = probe / amountToGet.Value;
-        if (buyPrice <= 0m) return null;
-
-        return MakeResult(query, buyPrice);
+        return buyPrice <= 0m ? null : MakeResult(query, buyPrice);
     }
 
-    // ── Currencies (not required — no auth needed, skip for simplicity) ───────
-    public Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExchangeCurrency>>(Array.Empty<ExchangeCurrency>());
+    // ── Currencies ────────────────────────────────────────────────────────────
+    // GET /api/v1/instruments/public → [{ currencyTitle, networkTitle, slug,
+    // instrumentType ("crypto"|...), ... }]. Keep only crypto (drops fiat like BGN).
+    public async Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
+    {
+        var instruments = await GetInstrumentsAsync(ct);
+        return instruments
+            .Where(i => i.Type.Equals("crypto", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(i.Cur))
+            .Select(i => new ExchangeCurrency(
+                ExchangeId: $"{i.Cur}|{i.Net}".ToLowerInvariant(),
+                Ticker: i.Cur.Trim().ToUpperInvariant(),
+                Network: i.Net.Trim()))
+            .GroupBy(x => x.ExchangeId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(x => x.Ticker)
+            .ThenBy(x => x.Network)
+            .ToList();
+    }
+
+    private static string? GetStr(JsonElement el, string name)
+        => el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 
     // ── Core rate call ────────────────────────────────────────────────────────
     // Returns (amountToGet, minRequired).
@@ -194,6 +273,8 @@ public sealed class SwapgateClient : ISwapgateClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, fullUrl);
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                req.Headers.TryAddWithoutValidation("User-Agent", opt.UserAgent);
 
             var sendTask = _http.SendAsync(req, ct);
             var timeoutTask = Task.Delay(timeout, ct);

@@ -14,8 +14,11 @@ namespace ExchangeServices.Implementations;
 ///
 /// Auth: X-API-Key header.
 ///
-/// SELL (XMR→USDT): from=XMR, to=USDT, amount=1       → price      = USDT per 1 XMR
-/// BUY  (USDT→XMR): from=USDT, to=XMR, final_amount=1 → from_amount = USDT needed to receive 1 XMR
+/// Generalized over any Base/Quote pair (XMR↔USDT/BTC/ETH …). Each AssetRef is
+/// resolved to BitXChange's (symbol, network); a bare ticker uses its native chain.
+///
+/// SELL (Base→Quote): from=Base amount=probe → to_amount = quote received; price = to_amount/probe
+/// BUY  (Quote→Base): from=Quote amount=probe → to_amount = base received;  price = probe/to_amount
 /// </summary>
 public sealed class BitXChangeClient : IBitXChangeClient
 {
@@ -41,64 +44,93 @@ public sealed class BitXChangeClient : IBitXChangeClient
         opt = options.Value;
     }
 
-    // ── SELL: XMR → USDT ─────────────────────────────────────────────────────
-    public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
+    // ── Asset resolution ───────────────────────────────────────────────────────
+    // Map an AssetRef (ticker + optional network) to BitXChange's (symbol, network).
+    // A bare ticker resolves to its native chain (XMR→XMR, BTC→BTC, ETH→ETH,
+    // USDT→TRC20 via opts); an explicit AssetRef.Network is honoured as-is.
+    private (string Symbol, string Network)? Resolve(AssetRef a)
     {
-        var (price, _, minDeposit) = await GetPriceAsync(
-            from: opt.XmrSymbol, fromNetwork: opt.XmrNetwork,
-            to: opt.UsdtSymbol, toNetwork: opt.UsdtNetwork,
-            amount: 1m, finalAmount: null, ct);
-
-        if (price is null && minDeposit is > 0m)
-        {
-            var probe = minDeposit.Value * 1.1m;
-            (price, _, _) = await GetPriceAsync(
-                opt.XmrSymbol, opt.XmrNetwork,
-                opt.UsdtSymbol, opt.UsdtNetwork,
-                amount: probe, finalAmount: null, ct);
-            if (price is null or <= 0m) return null;
-            return MakeResult(query, price.Value / probe);
-        }
-
-        if (price is null or <= 0m) return null;
-        return MakeResult(query, price.Value);
+        var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        if (ticker.Length == 0) return null;
+        var network = string.IsNullOrWhiteSpace(a.Network) ? NativeNetwork(ticker) : a.Network!.Trim();
+        return (ticker, network);
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    private string NativeNetwork(string ticker)
+    {
+        if (ticker.Equals(opt.XmrSymbol, StringComparison.OrdinalIgnoreCase)) return opt.XmrNetwork;
+        if (ticker.Equals(opt.UsdtSymbol, StringComparison.OrdinalIgnoreCase)) return opt.UsdtNetwork;
+        // For native-chain assets BitXChange's network string equals the ticker
+        // (verified: BTC→BTC, ETH→ETH).
+        return ticker;
+    }
+
+    // ── SELL: Base → Quote (XMR → USDT/BTC/ETH) ──────────────────────────────
+    public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
+    {
+        var b = Resolve(query.Base);
+        var q = Resolve(query.Quote);
+        if (b is null || q is null) return null;
+
+        var probe = 1m; // probe in the base currency; amount=1 keeps XMR→USDT behaviour identical
+        var (toAmount, minDeposit) = await GetRateAsync(
+            b.Value.Symbol, b.Value.Network, q.Value.Symbol, q.Value.Network, probe, ct);
+
+        if (toAmount is null && minDeposit is > 0m)
+        {
+            probe = minDeposit.Value * 1.1m;
+            (toAmount, _) = await GetRateAsync(
+                b.Value.Symbol, b.Value.Network, q.Value.Symbol, q.Value.Network, probe, ct);
+        }
+
+        if (toAmount is null || toAmount <= 0m) return null;
+        var sellPrice = toAmount.Value / probe; // quote received per 1 base
+        return sellPrice <= 0m ? null : MakeResult(query, sellPrice);
+    }
+
+    // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        // final_amount=1 → "I want to receive 1 XMR"
-        // API returns from_amount = USDT you need to send — that's our buy price.
-        var (_, fromAmount, _) = await GetPriceAsync(
-            from: opt.UsdtSymbol, fromNetwork: opt.UsdtNetwork,
-            to: opt.XmrSymbol, toNetwork: opt.XmrNetwork,
-            amount: null, finalAmount: 1m, ct);
+        var b = Resolve(query.Base);
+        var q = Resolve(query.Quote);
+        if (b is null || q is null) return null;
 
-        if (fromAmount is null or <= 0m) return null;
-        return MakeResult(query, fromAmount.Value);
+        // Probe is denominated in the QUOTE currency (PriceService sets it per quote:
+        // 0.01 BTC, 0.3 ETH; default = opt.BuyProbeAmountUsdt for USDT).
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var (toAmount, minDeposit) = await GetRateAsync(
+            q.Value.Symbol, q.Value.Network, b.Value.Symbol, b.Value.Network, probe, ct);
+
+        if (toAmount is null && minDeposit is > 0m)
+        {
+            probe = minDeposit.Value * 1.1m;
+            (toAmount, _) = await GetRateAsync(
+                q.Value.Symbol, q.Value.Network, b.Value.Symbol, b.Value.Network, probe, ct);
+        }
+
+        if (toAmount is null || toAmount <= 0m) return null;
+        // toAmount = base received for `probe` of quote → quote spent per 1 base.
+        var buyPrice = probe / toAmount.Value;
+        return buyPrice <= 0m ? null : MakeResult(query, buyPrice);
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────
     public Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ExchangeCurrency>>(Array.Empty<ExchangeCurrency>());
 
-    // ── Core price call ───────────────────────────────────────────────────────
-    // Returns (price, fromAmount, minDeposit).
-    private async Task<(decimal? price, decimal? fromAmount, decimal? minDeposit)> GetPriceAsync(
+    // ── Core rate call ──────────────────────────────────────────────────────────
+    // Sends `amount` of `from` and returns (to_amount received, min_deposit).
+    // If `amount` is below the minimum the API returns to_amount=null and the
+    // min_deposit (in the `from` currency) so the caller can retry with more.
+    private async Task<(decimal? toAmount, decimal? minDeposit)> GetRateAsync(
         string from, string fromNetwork,
         string to, string toNetwork,
-        decimal? amount, decimal? finalAmount,
-        CancellationToken ct)
+        decimal amount, CancellationToken ct)
     {
         var qs = $"from={Uri.EscapeDataString(from)}" +
                  $"&to={Uri.EscapeDataString(to)}" +
-                 $"&type=variable";
-
-        if (amount.HasValue)
-            qs += $"&amount={amount.Value.ToString(InvCulture)}";
-
-        if (finalAmount.HasValue)
-            qs += $"&final_amount={finalAmount.Value.ToString(InvCulture)}";
+                 $"&type=variable" +
+                 $"&amount={amount.ToString(InvCulture)}";
 
         if (!string.IsNullOrWhiteSpace(fromNetwork))
             qs += $"&from_network={Uri.EscapeDataString(fromNetwork)}";
@@ -107,36 +139,35 @@ public sealed class BitXChangeClient : IBitXChangeClient
 
         var fullUrl = $"{opt.BaseUrl.TrimEnd('/')}/price?{qs}";
         var body = await GetAsync(fullUrl, ct);
-        if (body is null) return (null, null, null);
+        if (body is null) return (null, null);
 
         try
         {
-            var debugBody = body; // breakpoint here to inspect raw JSON
-
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
 
-            var price = root.TryGetProperty("price", out var pEl) ? ReadDecimal(pEl) : 0m;
-            var fromAmount = root.TryGetProperty("from_amount", out var faEl) ? ReadDecimal(faEl) : 0m;
+            // For amount-based requests the API returns to_amount = units of `to`
+            // received (the "price" field mirrors to_amount when amount is supplied).
+            var toAmount = root.TryGetProperty("to_amount", out var taEl) ? ReadDecimal(taEl) : 0m;
+            if (toAmount <= 0m && root.TryGetProperty("price", out var pEl))
+                toAmount = ReadDecimal(pEl);
             var minDeposit = root.TryGetProperty("min_deposit", out var minEl) ? ReadDecimal(minEl) : 0m;
 
-            if (price <= 0m && fromAmount <= 0m)
+            if (toAmount <= 0m)
             {
-                Console.WriteLine($"[BITXCHANGE] zero price for {from}→{to} amount={amount} final_amount={finalAmount}: {body}");
-                return (null, null, minDeposit > 0m ? minDeposit : null);
+                Console.WriteLine($"[BITXCHANGE] zero rate for {from}→{to} amount={amount}: {body}");
+                return (null, minDeposit > 0m ? minDeposit : null);
             }
 
-            if (amount.HasValue && minDeposit > 0m && amount.Value < minDeposit)
-                return (null, null, minDeposit);
+            if (minDeposit > 0m && amount < minDeposit)
+                return (null, minDeposit);
 
-            return (price > 0m ? price : null,
-                    fromAmount > 0m ? fromAmount : null,
-                    minDeposit > 0m ? minDeposit : null);
+            return (toAmount, minDeposit > 0m ? minDeposit : null);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[BITXCHANGE] parse error: {ex.Message} — {body}");
-            return (null, null, null);
+            return (null, null);
         }
     }
 

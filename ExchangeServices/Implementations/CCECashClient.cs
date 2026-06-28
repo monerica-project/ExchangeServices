@@ -44,8 +44,12 @@ public sealed class CCECashClient : ICCECashClient
     // =========================
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
+        // The recent-prices feed is USDT-denominated, so it's only valid when the
+        // quote IS USDT. For BTC/ETH (etc.) fall through to /calculate, which prices
+        // the actual requested pair.
+        var quoteIsUsdt = (query.Quote.Ticker ?? "").Trim().ToUpperInvariant() == "USDT";
         var ticker = (query.Base.Ticker ?? "").Trim().ToUpperInvariant();
-        var price = await GetRecentPriceForAsync(ticker, ct);
+        var price = quoteIsUsdt ? await GetRecentPriceForAsync(ticker, ct) : 0m;
 
         if (price > 0)
         {
@@ -60,7 +64,7 @@ public sealed class CCECashClient : ICCECashClient
             );
         }
 
-        // Fallback: single calculate call
+        // BTC/ETH or no recent price: calculate honors the actual quote.
         return await GetPriceViaCalculateAsync(query, ct);
     }
 
@@ -69,8 +73,10 @@ public sealed class CCECashClient : ICCECashClient
     // ==========================================
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
+        // USDT-only fast path (recent prices are in USDT); BTC/ETH go via /calculate.
+        var quoteIsUsdt = (query.Quote.Ticker ?? "").Trim().ToUpperInvariant() == "USDT";
         var ticker = (query.Base.Ticker ?? "").Trim().ToUpperInvariant();
-        var price = await GetRecentPriceForAsync(ticker, ct);
+        var price = quoteIsUsdt ? await GetRecentPriceForAsync(ticker, ct) : 0m;
 
         if (price > 0)
         {
@@ -85,7 +91,7 @@ public sealed class CCECashClient : ICCECashClient
             );
         }
 
-        // Fallback: single calculate call
+        // BTC/ETH or no recent price: calculate honors the actual quote.
         return await GetBuyPriceViaCalculateAsync(query, ct);
     }
 
@@ -126,8 +132,18 @@ public sealed class CCECashClient : ICCECashClient
             .GroupBy(x => x.ExchangeId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .OrderBy(x => x.Ticker)
+            // Native/home chain first per ticker, so a consumer that takes the first
+            // match for a bare ticker (e.g. PriceService) gets the canonical chain
+            // (ETH→Ethereum) instead of a deposit-disabled L2 (ETH→Arbitrum).
+            .ThenByDescending(x => ChainOfId(x.ExchangeId).Equals(NativeChainFor(x.Ticker), StringComparison.OrdinalIgnoreCase))
             .ThenBy(x => x.Network)
             .ToList();
+    }
+
+    private static string ChainOfId(string exchangeId)
+    {
+        var p = exchangeId.Split(':', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return p.Length == 2 ? p[1] : "";
     }
 
     // =========================
@@ -263,17 +279,49 @@ public sealed class CCECashClient : ICCECashClient
         var all = await GetCurrenciesAsync(ct);
         if (all.Count == 0) return null;
 
-        var wantNet = (asset.Network ?? "Mainnet").Trim();
-        var match = all.FirstOrDefault(x =>
-                          x.Ticker.Equals(t, StringComparison.OrdinalIgnoreCase) &&
-                          x.Network.Equals(wantNet, StringComparison.OrdinalIgnoreCase))
-                      ?? all.FirstOrDefault(x => x.Ticker.Equals(t, StringComparison.OrdinalIgnoreCase));
+        // ExchangeId is "ABBR:Chain" (chain = CCE's original name, e.g. "Ethereum").
+        static string ChainOf(ExchangeCurrency c)
+        {
+            var p = c.ExchangeId.Split(':', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return p.Length == 2 ? p[1] : "";
+        }
+
+        var wantNet = (asset.Network ?? "").Trim();
+        // When no network is given, prefer the coin's native/home chain — otherwise
+        // the first match can be a deposit-disabled L2 (e.g. ETH on Arbitrum).
+        var native = NativeChainFor(t);
+
+        var match = (!string.IsNullOrWhiteSpace(wantNet)
+                        ? all.FirstOrDefault(x => x.Ticker.Equals(t, StringComparison.OrdinalIgnoreCase) &&
+                                                  x.Network.Equals(wantNet, StringComparison.OrdinalIgnoreCase))
+                        : null)
+                    ?? (native is not null
+                        ? all.FirstOrDefault(x => x.Ticker.Equals(t, StringComparison.OrdinalIgnoreCase) &&
+                                                  ChainOf(x).Equals(native, StringComparison.OrdinalIgnoreCase))
+                        : null)
+                    ?? all.FirstOrDefault(x => x.Ticker.Equals(t, StringComparison.OrdinalIgnoreCase));
 
         if (match is null) return null;
 
         var p = match.ExchangeId.Split(':', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return p.Length == 2 ? (p[0].ToUpperInvariant(), p[1]) : null;
     }
+
+    // CCE's native/home chain name for common coins, used to avoid picking a
+    // deposit-disabled L2 variant when no explicit network is requested.
+    private static string? NativeChainFor(string ticker) => ticker.ToUpperInvariant() switch
+    {
+        "ETH" => "Ethereum",
+        "BTC" => "Bitcoin",
+        "BNB" => "BNB Smart Chain",
+        "SOL" => "Solana",
+        "TRX" => "Tron",
+        "LTC" => "Litecoin",
+        "BCH" => "Bitcoin Cash",
+        "DOGE" => "Dogecoin",
+        "ADA" => "Cardano",
+        _ => null,
+    };
 
     private static string? GuessChainFromNetworkOrTicker(AssetRef asset)
     {

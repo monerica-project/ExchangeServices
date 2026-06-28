@@ -24,11 +24,15 @@ namespace ExchangeServices.Implementations;
 /// Network note: XMR<->USDT is NOT available on TRX. Use a supported USDT
 /// network (ETH/BSC/MATIC/ARBITRUM/APT/...). USDT price is network-agnostic.
 ///
-/// SELL (XMR→USDT): from=XMR, to=USDT, amount=1
-///   → receive_amount = USDT per 1 XMR (direct)
+/// Pairs are derived from query.Base/query.Quote (XMR↔USDT/BTC/ETH). Each
+/// AssetRef resolves to a (coin, network): explicit network wins, else the
+/// native chain (XMR→XMR, BTC→BTC, ETH→ETH; bare USDT→opt.UsdtNetwork=ETH).
 ///
-/// BUY  (USDT→XMR): from=USDT, to=XMR, amount=probe
-///   → receive_amount = XMR received → buyPrice = probe / receive_amount
+/// SELL (Base→Quote): from=Base, to=Quote, amount=1
+///   → receive_amount = Quote per 1 Base (direct)
+///
+/// BUY  (Quote→Base): from=Quote, to=Base, amount=probe (query.ProbeAmount ?? default)
+///   → receive_amount = Base received → buyPrice = probe / receive_amount
 ///
 /// If amount < min_amount, retry at min_amount * 1.1
 /// </summary>
@@ -55,7 +59,29 @@ public sealed class StereoSwapClient : IStereoSwapClient
         opt = options.Value;
     }
 
-    // ── SELL: XMR → USDT ─────────────────────────────────────────────────────
+    // ── Asset resolution ─────────────────────────────────────────────────────
+    // Map an AssetRef (ticker + optional network) to StereoSwap's (coin, network).
+    // An explicit AssetRef.Network wins; a bare ticker resolves to its native chain
+    // (XMR→XMR, BTC→BTC, ETH→ETH). USDT is network-agnostic for pricing but is NOT
+    // available on TRC20, so a bare USDT defaults to opt.UsdtNetwork (ETH). XMR's
+    // native chain comes from opt.XmrNetwork so the XMR↔USDT pair stays identical.
+    private (string Coin, string Network) Resolve(AssetRef a)
+    {
+        var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
+
+        if (!string.IsNullOrWhiteSpace(a.Network))
+            return (ticker, a.Network!.Trim().ToUpperInvariant());
+
+        var native = ticker switch
+        {
+            "XMR" => string.IsNullOrWhiteSpace(opt.XmrNetwork) ? "XMR" : opt.XmrNetwork.Trim().ToUpperInvariant(),
+            "USDT" => string.IsNullOrWhiteSpace(opt.UsdtNetwork) ? "ETH" : opt.UsdtNetwork.Trim().ToUpperInvariant(),
+            _ => ticker, // BTC→BTC, ETH→ETH, … native chain == ticker
+        };
+        return (ticker, native);
+    }
+
+    // ── SELL: Base → Quote (1 base → quote received) ──────────────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey))
@@ -64,27 +90,30 @@ public sealed class StereoSwapClient : IStereoSwapClient
             return null;
         }
 
+        var baseA = Resolve(query.Base);
+        var quoteA = Resolve(query.Quote);
+
         var (receiveAmt, minAmt) = await CalculateAsync(
-            fromCoin: opt.XmrCoin, fromNetwork: opt.XmrNetwork,
-            toCoin: opt.UsdtCoin, toNetwork: opt.UsdtNetwork,
+            fromCoin: baseA.Coin, fromNetwork: baseA.Network,
+            toCoin: quoteA.Coin, toNetwork: quoteA.Network,
             amount: 1m, ct);
 
         if (receiveAmt is null && minAmt is > 0m)
         {
             var probe = minAmt.Value * 1.1m;
             (receiveAmt, _) = await CalculateAsync(
-                opt.XmrCoin, opt.XmrNetwork,
-                opt.UsdtCoin, opt.UsdtNetwork,
+                baseA.Coin, baseA.Network,
+                quoteA.Coin, quoteA.Network,
                 probe, ct);
             if (receiveAmt is null or <= 0m) return null;
-            return MakeResult(query, receiveAmt.Value / probe);
+            return MakeResult(query, receiveAmt.Value / probe); // quote received per 1 base
         }
 
         if (receiveAmt is null or <= 0m) return null;
         return MakeResult(query, receiveAmt.Value); // amount=1 → direct
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    // ── BUY: Quote → Base (probe quote → base received) ───────────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey))
@@ -93,24 +122,28 @@ public sealed class StereoSwapClient : IStereoSwapClient
             return null;
         }
 
-        var probe = opt.BuyProbeAmountUsdt;
+        var baseA = Resolve(query.Base);
+        var quoteA = Resolve(query.Quote);
+
+        // Probe is denominated in the QUOTE currency (PriceService sets it per quote).
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
 
         var (receiveAmt, minAmt) = await CalculateAsync(
-            fromCoin: opt.UsdtCoin, fromNetwork: opt.UsdtNetwork,
-            toCoin: opt.XmrCoin, toNetwork: opt.XmrNetwork,
+            fromCoin: quoteA.Coin, fromNetwork: quoteA.Network,
+            toCoin: baseA.Coin, toNetwork: baseA.Network,
             amount: probe, ct);
 
         if (receiveAmt is null && minAmt is > 0m)
         {
             probe = minAmt.Value * 1.1m;
             (receiveAmt, _) = await CalculateAsync(
-                opt.UsdtCoin, opt.UsdtNetwork,
-                opt.XmrCoin, opt.XmrNetwork,
+                quoteA.Coin, quoteA.Network,
+                baseA.Coin, baseA.Network,
                 probe, ct);
         }
 
         if (receiveAmt is null or <= 0m) return null;
-        return MakeResult(query, probe / receiveAmt.Value);
+        return MakeResult(query, probe / receiveAmt.Value); // quote spent per 1 base
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────

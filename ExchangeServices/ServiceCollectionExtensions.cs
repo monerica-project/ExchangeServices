@@ -57,8 +57,9 @@ public static class ServiceCollectionExtensions
 
         //        services.AddDevilExchange(config);
 
-        //services.AddSecureShift(config);
-        // services.AddQuickEx(config); // auth issues
+        //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
+        services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
+        services.AddSwapter(config);   // two-way XMR<->BTC/ETH/USDT
 
         // auth issues 
         services.AddSwapuz(config);

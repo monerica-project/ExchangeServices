@@ -51,49 +51,64 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
     private sealed record RateItem(string From, string To, decimal In, decimal Out);
 
     // SELL: 1 XMR -> USDT.  Feed row from=XMR, to=USDT* ; price = out/in (USDT per XMR).
+    // SELL: base -> quote. Feed row from=base, to=quote ; price = out/in (quote per base).
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         var items = await GetFeedAsync(ct);
-        var row = PickUsdtRow(items, fromXmr: true);
+        var baseT = (query.Base.Ticker ?? "XMR").Trim().ToUpperInvariant();
+        var quoteT = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
+        var row = PickRow(items, baseT, quoteT, fromBase: true);
         if (row is null || row.In <= 0 || row.Out <= 0) return null;
 
-        var usdtPerXmr = row.Out / row.In; // USDT received per 1 XMR sold
-        if (usdtPerXmr <= 0) return null;
+        var price = row.Out / row.In; // quote received per 1 base sold
+        if (price <= 0) return null;
 
-        return new PriceResult(ExchangeKey, query.Base, query.Quote, usdtPerXmr, DateTimeOffset.UtcNow);
+        return new PriceResult(ExchangeKey, query.Base, query.Quote, price, DateTimeOffset.UtcNow);
     }
 
-    // BUY: USDT -> 1 XMR.  Feed row from=USDT*, to=XMR ; price = in/out (USDT per XMR).
+    // BUY: quote -> base. Feed row from=quote, to=base ; price = in/out (quote per base).
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         var items = await GetFeedAsync(ct);
-        var row = PickUsdtRow(items, fromXmr: false);
+        var baseT = (query.Base.Ticker ?? "XMR").Trim().ToUpperInvariant();
+        var quoteT = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
+        var row = PickRow(items, baseT, quoteT, fromBase: false);
         if (row is null || row.In <= 0 || row.Out <= 0) return null;
 
-        var usdtPerXmr = row.In / row.Out; // USDT paid per 1 XMR bought
-        if (usdtPerXmr <= 0) return null;
+        var price = row.In / row.Out; // quote paid per 1 base bought
+        if (price <= 0) return null;
 
-        return new PriceResult(ExchangeKey, query.Base, query.Quote, usdtPerXmr, DateTimeOffset.UtcNow);
+        return new PriceResult(ExchangeKey, query.Base, query.Quote, price, DateTimeOffset.UtcNow);
     }
 
-    // Pick the best XMR<->USDT row by USDT-chain preference, else any XMR<->USDT* row.
-    private static RateItem? PickUsdtRow(IReadOnlyList<RateItem> items, bool fromXmr)
+    // Pick the base<->quote row. For USDT the feed uses chain-suffixed variants
+    // (USDTERC20, USDTSOL, …) so we try those in preference; for BTC/ETH/etc. the
+    // ticker is matched exactly.
+    private static RateItem? PickRow(IReadOnlyList<RateItem> items, string baseTicker, string quoteTicker, bool fromBase)
     {
-        foreach (var pref in UsdtPref)
+        bool IsBase(string s) => s.Equals(baseTicker, StringComparison.OrdinalIgnoreCase);
+
+        var quoteCandidates = quoteTicker.Equals("USDT", StringComparison.OrdinalIgnoreCase)
+            ? UsdtPref
+            : new[] { quoteTicker };
+
+        foreach (var q in quoteCandidates)
         {
-            var hit = items.FirstOrDefault(i => fromXmr
-                ? i.From.Equals("XMR", StringComparison.OrdinalIgnoreCase) &&
-                  i.To.Equals(pref, StringComparison.OrdinalIgnoreCase)
-                : i.To.Equals("XMR", StringComparison.OrdinalIgnoreCase) &&
-                  i.From.Equals(pref, StringComparison.OrdinalIgnoreCase));
+            var hit = items.FirstOrDefault(i => fromBase
+                ? IsBase(i.From) && i.To.Equals(q, StringComparison.OrdinalIgnoreCase)
+                : IsBase(i.To) && i.From.Equals(q, StringComparison.OrdinalIgnoreCase));
             if (hit is not null) return hit;
         }
 
-        return items.FirstOrDefault(i => fromXmr
-            ? i.From.Equals("XMR", StringComparison.OrdinalIgnoreCase) &&
-              i.To.StartsWith("USDT", StringComparison.OrdinalIgnoreCase)
-            : i.To.Equals("XMR", StringComparison.OrdinalIgnoreCase) &&
-              i.From.StartsWith("USDT", StringComparison.OrdinalIgnoreCase));
+        // USDT: accept any chain variant not in the preference list.
+        if (quoteTicker.Equals("USDT", StringComparison.OrdinalIgnoreCase))
+        {
+            return items.FirstOrDefault(i => fromBase
+                ? IsBase(i.From) && i.To.StartsWith("USDT", StringComparison.OrdinalIgnoreCase)
+                : IsBase(i.To) && i.From.StartsWith("USDT", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return null;
     }
 
     // =========================

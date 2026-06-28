@@ -42,29 +42,59 @@ public sealed class XgramClient : IXgramClient
         return s.Length <= max ? s : s.Substring(0, max) + "…(truncated)";
     }
 
-    // ── SELL: XMR → USDT TRC20 ───────────────────────────────────────
+    // Map an AssetRef (ticker + optional network) to Xgram's currency code.
+    // The network is implied by the code on Xgram, so XMR/BTC/ETH are bare tickers;
+    // USDT defaults to TRC20 (existing behavior) but honors an explicit network.
+    // Unknown tickers fall back to the uppercased ticker.
+    private string Code(AssetRef a)
+    {
+        var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        return ticker switch
+        {
+            "XMR" => opt.XmrCode,
+            "BTC" => "BTC",
+            "ETH" => "ETH",
+            "USDT" => (a.Network ?? "").Trim().ToLowerInvariant() switch
+            {
+                "erc20" or "ethereum" or "eth" => "USDTERC20",
+                "bsc" or "bep20" or "binance smart chain" => "USDTBSC",
+                "solana" or "sol" => "USDTSOLANA",
+                _ => opt.UsdtCode, // TRC20 default = existing behavior
+            },
+            _ => ticker,
+        };
+    }
+
+    // ── SELL: Base → Quote (e.g. XMR → USDT/BTC/ETH) ─────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey)) { Log("missing ApiKey"); return null; }
 
-        var dto = await GetRateAsync(opt.XmrCode, opt.UsdtCode, ccyAmount: 1m, ct);
+        // amount=1 base → rate = quote received per 1 base = sell price.
+        var dto = await GetRateAsync(Code(query.Base), Code(query.Quote), ccyAmount: 1m, ct);
         if (dto is null || !dto.Result || dto.Rate <= 0) return null;
 
         return Result(query, dto.Rate);
     }
 
-    // ── BUY: USDT TRC20 → XMR ────────────────────────────────────────
+    // ── BUY: Quote → Base (e.g. USDT/BTC/ETH → XMR) ──────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey)) return null;
 
-        var dto = await GetRateAsync(opt.UsdtCode, opt.XmrCode, ccyAmount: opt.BuyProbeAmountUsdt, ct);
+        var fromCcy = Code(query.Quote);
+        var toCcy = Code(query.Base);
+        // Probe is in the QUOTE currency. rate = base received for `probe` of quote,
+        // so buyPrice = quote sent / base received = probe / rate.
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+
+        var dto = await GetRateAsync(fromCcy, toCcy, ccyAmount: probe, ct);
         if (dto is null || !dto.Result || dto.Rate <= 0)
         {
             if (dto?.MinFrom is > 0)
             {
                 var retryAmount = dto.MinFrom.Value * 1.1m;
-                var retry = await GetRateAsync(opt.UsdtCode, opt.XmrCode, retryAmount, ct);
+                var retry = await GetRateAsync(fromCcy, toCcy, retryAmount, ct);
                 if (retry is null || !retry.Result || retry.Rate <= 0) return null;
                 var retryPrice = retryAmount / retry.Rate;
                 if (retryPrice <= 0) return null;
@@ -73,7 +103,7 @@ public sealed class XgramClient : IXgramClient
             else return null;
         }
 
-        var buyPrice = opt.BuyProbeAmountUsdt / dto.Rate;
+        var buyPrice = probe / dto.Rate;
         if (buyPrice <= 0) return null;
 
         return Result(query, buyPrice);

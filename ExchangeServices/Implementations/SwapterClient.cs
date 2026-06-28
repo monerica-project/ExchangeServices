@@ -52,43 +52,82 @@ public sealed class SwapterClient : ISwapterClient
         opt = options.Value;
     }
 
-    // ── SELL: XMR → USDT ─────────────────────────────────────────────────────
+    // ── Asset resolution ──────────────────────────────────────────────────────
+    // Map an AssetRef (ticker + optional network) to Swapter's (coin, network).
+    // Swapter uses the chain ticker as the network (XMR/BTC/ETH; USDT→TRX), not the
+    // protocol name. A bare ticker resolves to its native chain; USDT defaults to
+    // the configured stable-coin network (TRX). This keeps XMR/USDT identical to
+    // the previous hard-coded behaviour while generalising to BTC/ETH and beyond.
+    private (string Coin, string Network) Resolve(AssetRef a)
+    {
+        var coin = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        var net = (a.Network ?? "").Trim();
+
+        if (!string.IsNullOrWhiteSpace(net))
+            return (coin, NormNet(net));
+
+        var network = coin switch
+        {
+            "USDT" => opt.UsdtNetwork,   // stable-coin default chain (TRX)
+            _ => coin,                    // XMR/BTC/ETH … use their own ticker as native network
+        };
+        return (coin, network);
+    }
+
+    // Normalise common protocol/chain aliases to Swapter's chain-ticker network strings.
+    private static string NormNet(string n) => n.Trim().ToUpperInvariant() switch
+    {
+        "TRON" or "TRC20" or "TRX" => "TRX",
+        "ETHEREUM" or "ERC20" or "ETH" => "ETH",
+        "BITCOIN" or "BTC" => "BTC",
+        "MONERO" or "XMR" => "XMR",
+        var x => x,
+    };
+
+    // ── SELL: Base → Quote (XMR → USDT/BTC/ETH) ──────────────────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var min = await GetMinAmountAsync(opt.XmrCoin, opt.XmrNetwork, opt.UsdtCoin, opt.UsdtNetwork, ct);
+        var (baseCoin, baseNet) = Resolve(query.Base);
+        var (quoteCoin, quoteNet) = Resolve(query.Quote);
+
+        var min = await GetMinAmountAsync(baseCoin, baseNet, quoteCoin, quoteNet, ct);
         var probe = (min is > 0m && min > 1m) ? min.Value * 1.1m : 1m;
 
         var (withdrawAmt, _) = await EstimateAsync(
-            opt.XmrCoin, opt.XmrNetwork, probe,
-            opt.UsdtCoin, opt.UsdtNetwork, ct);
+            baseCoin, baseNet, probe,
+            quoteCoin, quoteNet, ct);
 
         if (withdrawAmt is null or <= 0m) return null;
 
-        // withdrawAmt = USDT received for probe XMR → normalise to per-1-XMR
+        // withdrawAmt = quote received for probe base → quote received per 1 base
         var sellPrice = withdrawAmt.Value / probe;
 
-        // min is in XMR → convert to USD using sell price
+        // min is in the base currency → convert to quote using sell price (USD when quote is USDT)
         decimal? minUsd = min is > 0m ? min.Value * sellPrice : null;
         minUsd ??= opt.MinAmountUsd > 0m ? opt.MinAmountUsd : null;
 
         return MakeResult(query, sellPrice, minUsd);
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var min = await GetMinAmountAsync(opt.UsdtCoin, opt.UsdtNetwork, opt.XmrCoin, opt.XmrNetwork, ct);
-        var probe = opt.BuyProbeAmountUsdt;
+        var (baseCoin, baseNet) = Resolve(query.Base);
+        var (quoteCoin, quoteNet) = Resolve(query.Quote);
+
+        var min = await GetMinAmountAsync(quoteCoin, quoteNet, baseCoin, baseNet, ct);
+        // Probe is in the QUOTE currency (PriceService sets it per quote; default USDT).
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
         if (min is > 0m && min > probe) probe = min.Value * 1.1m;
 
         var (withdrawAmt, _) = await EstimateAsync(
-            opt.UsdtCoin, opt.UsdtNetwork, probe,
-            opt.XmrCoin, opt.XmrNetwork, ct);
+            quoteCoin, quoteNet, probe,
+            baseCoin, baseNet, ct);
 
         if (withdrawAmt is null or <= 0m) return null;
 
-        // withdrawAmt = XMR received for probe USDT → USDT per 1 XMR
-        // min is in USDT = USD directly
+        // withdrawAmt = base received for probe quote → quote spent per 1 base
+        // min is in the quote currency (= USD when quote is USDT)
         decimal? minUsd = min is > 0m ? min : null;
         minUsd ??= opt.MinAmountUsd > 0m ? opt.MinAmountUsd : null;
 

@@ -89,7 +89,11 @@ public sealed class TrocadorClient : ITrocadorClient
 
         if (tickerFrom is null || tickerTo is null) return null;
 
-        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, opt.BuyReferenceAmountUsdt, ct);
+        // Probe is denominated in the QUOTE currency (PriceService sets it per quote:
+        // 0.01 BTC, 0.3 ETH; default USDT). Fall back to the USDT reference amount.
+        var probe = query.ProbeAmount ?? opt.BuyReferenceAmountUsdt;
+
+        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, probe, ct);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
 
         await Task.WhenAll(rateTask, minTask);
@@ -97,7 +101,7 @@ public sealed class TrocadorClient : ITrocadorClient
         var dto = await rateTask;
         if (dto is null || dto.AmountTo <= 0) return null;
 
-        var buyPrice = opt.BuyReferenceAmountUsdt / dto.AmountTo;
+        var buyPrice = probe / dto.AmountTo;
         var minUsdt = await minTask;
 
         return new PriceResult(
@@ -107,7 +111,7 @@ public sealed class TrocadorClient : ITrocadorClient
             Price: buyPrice,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
-            Raw: $"buy ticker_from={tickerFrom} ticker_to={tickerTo} ref={opt.BuyReferenceAmountUsdt} amount_to={dto.AmountTo} buyPrice={buyPrice:F6} provider={dto.Provider}",
+            Raw: $"buy ticker_from={tickerFrom} ticker_to={tickerTo} ref={probe} amount_to={dto.AmountTo} buyPrice={buyPrice:F6} provider={dto.Provider}",
             MinAmountUsd: minUsdt > 0m ? minUsdt : (opt.MinAmountUsd > 0m ? opt.MinAmountUsd : null)
         );
     }
@@ -213,11 +217,12 @@ public sealed class TrocadorClient : ITrocadorClient
         var ticker = (asset.Ticker ?? "").Trim().ToUpperInvariant();
         var net = (asset.Network ?? "").Trim();
 
-        return ticker switch
+        var resolved = ticker switch
         {
             "XMR" => ("xmr", "Mainnet"),
             "BTC" => ("btc", "Mainnet"),
-            "ETH" => ("eth", "Mainnet"),
+            // Ethereum mainnet on Trocador is "ERC20" — "Mainnet" is rejected ("coin not found").
+            "ETH" => ("eth", "ERC20"),
             "LTC" => ("ltc", "Mainnet"),
             "BNB" => ("bnb", "BSC"),
             "DOGE" => ("doge", "Mainnet"),
@@ -229,9 +234,9 @@ public sealed class TrocadorClient : ITrocadorClient
             "BCH" => ("bch", "Mainnet"),
             "USDT" => net switch
             {
-                "Tron" => ("usdt", "TRC20"),
-                "Ethereum" => ("usdt", "ERC20"),
-                "Binance Smart Chain" => ("usdt", "BEP20"),
+                "Tron" or "TRC20" => ("usdt", "TRC20"),
+                "Ethereum" or "ERC20" => ("usdt", "ERC20"),
+                "Binance Smart Chain" or "BEP20" or "BSC" => ("usdt", "BEP20"),
                 _ => ("usdt", opt.UsdtNetwork),
             },
             "USDC" => ("usdc", "ERC20"),
@@ -241,8 +246,17 @@ public sealed class TrocadorClient : ITrocadorClient
             "ATOM" => ("atom", "Mainnet"),
             "DASH" => ("dash", "Mainnet"),
             "ZEC" => ("zec", "Mainnet"),
-            _ => (null, string.Empty),
+            _ => ((string?)null, string.Empty),
         };
+
+        if (resolved.Item1 is null) return resolved;
+
+        // Honor an explicit AssetRef.Network override for non-USDT assets
+        // (USDT maps human-readable network names to Trocador strings above).
+        if (ticker != "USDT" && net.Length > 0)
+            return (resolved.Item1, net);
+
+        return resolved;
     }
 
     private void AddApiKey(HttpRequestMessage req)

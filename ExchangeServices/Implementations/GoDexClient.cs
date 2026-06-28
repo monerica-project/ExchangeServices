@@ -52,46 +52,49 @@ public sealed class GoDexClient : IGoDexClient
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // SELL: 1 XMR → quote (e.g. USDT or BTC)
-    //   Ask: "if I send 1 XMR, how much do I receive?"
+    // SELL: 1 Base → Quote (e.g. 1 XMR → USDT/BTC/ETH)
+    //   Ask: "if I send 1 Base, how much Quote do I receive?"
+    //   sell price = Quote received for 1 Base.
     // ════════════════════════════════════════════════════════════════════════
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var fromCode    = ToGoDexCode(query.Base);
-        var toCode      = ToGoDexCode(query.Quote);
-        var fromNetwork = ToGoDexNetwork(query.Base);
-        var toNetwork   = ToGoDexNetwork(query.Quote);
+        var (fromCode, fromNetwork) = Resolve(query.Base);   // sending the base
+        var (toCode,   toNetwork)   = Resolve(query.Quote);  // receiving the quote
 
-        var dto = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: 1m, ct);
-        if (dto is null || dto.Amount <= 0) return null;
+        var dto      = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: 1m, ct);
+        var received = dto?.Amount ?? 0m;
+        // GoDex signals unavailable pairs with amount:"0"/rate:"0" → treat as no price.
+        if (received <= 0m) return null;
 
         return new PriceResult(
             Exchange:      ExchangeKey,
             Base:          query.Base,
             Quote:         query.Quote,
-            Price:         dto.Amount,          // already post-fee: USDT or BTC received for 1 XMR
+            Price:         received,            // already post-fee: quote received for 1 base
             TimestampUtc:  DateTimeOffset.UtcNow,
             CorrelationId: null,
-            Raw:           $"sell 1 {fromCode}→{toCode} received={dto.Amount} rate={dto.Rate}");
+            Raw:           $"sell 1 {fromCode}→{toCode} received={received} rate={dto?.Rate}");
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // BUY: quote → 1 XMR
-    //   Ask: "if I send probeAmount of quote, how much XMR do I receive?"
-    //   buy price = probeAmount / xmrReceived
+    // BUY: Quote → 1 Base
+    //   Ask: "if I send probeAmount of Quote, how much Base do I receive?"
+    //   buy price = probeAmount / baseReceived  (quote per 1 base)
     // ════════════════════════════════════════════════════════════════════════
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var fromCode    = ToGoDexCode(query.Quote);    // spending the quote
-        var toCode      = ToGoDexCode(query.Base);     // receiving the base (XMR)
-        var fromNetwork = ToGoDexNetwork(query.Quote);
-        var toNetwork   = ToGoDexNetwork(query.Base);
+        var (fromCode, fromNetwork) = Resolve(query.Quote);  // spending the quote
+        var (toCode,   toNetwork)   = Resolve(query.Base);   // receiving the base (XMR)
 
-        var probe = PickProbeAmount(query.Quote);
-        var dto   = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: probe, ct);
-        if (dto is null || dto.Amount <= 0) return null;
+        // Probe is denominated in the QUOTE currency; honor PriceService's per-quote
+        // probe when set, otherwise fall back to the client's own default.
+        var probe    = query.ProbeAmount ?? PickProbeAmount(query.Quote);
+        var dto      = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: probe, ct);
+        var received = dto?.Amount ?? 0m;
+        // GoDex signals unavailable pairs (e.g. ETH→XMR) with amount:"0" → treat as no price.
+        if (received <= 0m) return null;
 
-        var buyPrice = probe / dto.Amount;  // quote per 1 XMR
+        var buyPrice = probe / received;  // quote per 1 base
 
         return new PriceResult(
             Exchange:      ExchangeKey,
@@ -100,7 +103,7 @@ public sealed class GoDexClient : IGoDexClient
             Price:         buyPrice,
             TimestampUtc:  DateTimeOffset.UtcNow,
             CorrelationId: null,
-            Raw:           $"buy probe={probe} {fromCode}→{toCode} xmrOut={dto.Amount:F6} price={buyPrice:F6} rate={dto.Rate}");
+            Raw:           $"buy probe={probe} {fromCode}→{toCode} baseOut={received:F6} price={buyPrice:F6} rate={dto?.Rate}");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -188,49 +191,42 @@ public sealed class GoDexClient : IGoDexClient
         };
     }
 
-    /// <summary>Maps an AssetRef to the GoDex coin code (e.g. "XMR", "USDT", "BTC").</summary>
-    private static string ToGoDexCode(AssetRef asset)
-    {
-        var ticker = (asset.Ticker ?? "").Trim().ToUpperInvariant();
-        // GoDex uses just "USDT" for all USDT variants; network differentiates the chain
-        return ticker.StartsWith("USDT") ? "USDT" : ticker;
-    }
-
     /// <summary>
-    /// Maps an AssetRef to a GoDex network string.
-    /// GoDex uses the coin code as the network for native chains (BTC→"BTC", XMR→"XMR")
-    /// and the chain name for tokens (USDT on Tron → "TRX", USDT on Ethereum → "ETH").
+    /// Resolves an AssetRef to GoDex's (ticker, network) pair. Tickers and networks
+    /// are always UPPERCASE.
+    ///
+    /// Native chains use the ticker as the network identifier (XMR→(XMR,XMR),
+    /// BTC→(BTC,BTC), ETH→(ETH,ETH)). USDT collapses to ticker "USDT" with the chain
+    /// carried by the network, honoring an explicit AssetRef.Network when present and
+    /// defaulting to TRX (Tron). Note GoDex uses "ETH" — not "ERC20" — for the
+    /// Ethereum-chain USDT network.
     /// </summary>
-    private static string ToGoDexNetwork(AssetRef asset)
+    private static (string Ticker, string Network) Resolve(AssetRef asset)
     {
         var ticker = (asset.Ticker ?? "").Trim().ToUpperInvariant();
 
-        // Handle USDT network variants explicitly
         if (ticker.StartsWith("USDT"))
         {
-            var net = (asset.Network ?? "").Trim();
-            return net switch
+            var net = (asset.Network ?? "").Trim().ToLowerInvariant();
+            var network = net switch
             {
-                "Tron"                => "TRX",
-                "Ethereum"            => "ETH",
-                "Binance Smart Chain" => "BSC",
-                "Solana"              => "SOL",
-                _                    => "TRX",   // default USDT to Tron (most common for XMR swaps)
+                ""                                        => "TRX",   // default USDT to Tron
+                "tron" or "trx" or "trc20"                => "TRX",
+                "ethereum" or "eth" or "erc20"            => "ETH",
+                "binance smart chain" or "bsc" or "bep20" => "BSC",
+                "solana" or "sol"                         => "SOL",
+                _                                         => net.ToUpperInvariant(),
             };
+            return ("USDT", network);
         }
 
-        // For native chains, GoDex uses the coin code as the network identifier
-        return ticker switch
+        // Native chains: GoDex uses the coin code as the network identifier.
+        var nativeNetwork = ticker switch
         {
-            "XMR"  => "XMR",
-            "BTC"  => "BTC",
-            "ETH"  => "ETH",
-            "LTC"  => "LTC",
-            "SOL"  => "SOL",
-            "BNB"  => "BSC",
-            "DOGE" => "DOGE",
-            _      => ticker,
+            "BNB" => "BSC",
+            _     => ticker,   // XMR→XMR, BTC→BTC, ETH→ETH, LTC→LTC, SOL→SOL, DOGE→DOGE, …
         };
+        return (ticker, nativeNetwork);
     }
 
     /// <summary>Best-guess canonical network name from a GoDex coin code.</summary>

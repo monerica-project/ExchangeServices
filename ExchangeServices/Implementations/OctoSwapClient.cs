@@ -152,7 +152,30 @@ public sealed class OctoSwapClient : IOctoSwapClient
     private PriceResult Result(PriceQuery q, decimal price) =>
         new(ExchangeKey, q.Base, q.Quote, price, DateTimeOffset.UtcNow, null, null);
 
+    // Tickers that MUST carry a network param on OctoSwap (esp. on the `to` side).
+    // ETH returns HTTP 500 without to_network=ETH; USDT requires its chain (TRX).
+    private static string? NativeNetworkFor(string ticker) => ticker.Trim().ToUpperInvariant() switch
+    {
+        "ETH" => "ETH",
+        "USDT" => "TRX",
+        _ => null
+    };
+
     private static string? ToOctoNetwork(string ticker, string? network)
+    {
+        var resolved = ResolveNetwork(network);
+
+        // Fallback: if a network-required ticker (ETH/USDT) resolved to null/empty
+        // (e.g. network was missing or "Mainnet"), substitute its native network so
+        // the from_network/to_network param is always sent for those.
+        // XMR/BTC have no native network and keep null (must send NO network param).
+        if (string.IsNullOrWhiteSpace(resolved))
+            resolved = NativeNetworkFor(ticker);
+
+        return resolved;
+    }
+
+    private static string? ResolveNetwork(string? network)
     {
         if (string.IsNullOrWhiteSpace(network)) return null;
 

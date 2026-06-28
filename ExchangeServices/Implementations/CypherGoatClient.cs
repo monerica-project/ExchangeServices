@@ -52,49 +52,76 @@ public sealed class CypherGoatClient : ICypherGoatClient
         opt = options.Value;
     }
 
-    // ── SELL: XMR → USDT ─────────────────────────────────────────────────────
+    // ── Asset resolution ───────────────────────────────────────────────────────
+    // Map an AssetRef (ticker + optional network) → CypherGoat (coin, network).
+    // Both lowercased per the API. A bare ticker resolves to its native chain
+    // (btc→btc, eth→eth, xmr→xmr); usdt falls back to opt.UsdtNetwork so the
+    // XMR/USDT pair behaves exactly as before.
+    private (string Coin, string Network) Resolve(AssetRef a)
+    {
+        var coin = (a.Ticker ?? "").Trim().ToLowerInvariant();
+        var net = (a.Network ?? "").Trim().ToLowerInvariant();
+        if (net.Length == 0)
+            net = coin switch
+            {
+                "usdt" => opt.UsdtNetwork.Trim().ToLowerInvariant(),
+                _ => coin,   // native chain
+            };
+        return (coin, net);
+    }
+
+    // ── SELL: Base → Quote (XMR → USDT/BTC/ETH) ──────────────────────────────
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
+        var b = Resolve(query.Base);
+        var q = Resolve(query.Quote);
+
         var (amount, min, tvFiat) = await EstimateAsync(
-            coin1: opt.XmrCoin, network1: opt.XmrNetwork,
-            coin2: opt.UsdtCoin, network2: opt.UsdtNetwork,
+            coin1: b.Coin, network1: b.Network,
+            coin2: q.Coin, network2: q.Network,
             depositAmount: 1m, ct);
 
         if (amount is null && min is > 0m)
         {
             var probe = min.Value * 1.1m;
             (amount, _, tvFiat) = await EstimateAsync(
-                opt.XmrCoin, opt.XmrNetwork,
-                opt.UsdtCoin, opt.UsdtNetwork,
+                b.Coin, b.Network,
+                q.Coin, q.Network,
                 probe, ct);
             if (amount is null or <= 0m) return null;
             return MakeResult(query, amount.Value / probe, CalcMinUsd(min, tvFiat, probe));
         }
 
         if (amount is null or <= 0m) return null;
+        // amount = quote received per 1 base = sell price.
         return MakeResult(query, amount.Value, CalcMinUsd(min, tvFiat, 1m));
     }
 
-    // ── BUY: USDT → XMR ──────────────────────────────────────────────────────
+    // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var probe = opt.BuyProbeAmountUsdt;
+        var b = Resolve(query.Base);
+        var q = Resolve(query.Quote);
+
+        // Probe is denominated in the QUOTE currency.
+        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
 
         var (amount, min, tvFiat) = await EstimateAsync(
-            coin1: opt.UsdtCoin, network1: opt.UsdtNetwork,
-            coin2: opt.XmrCoin, network2: opt.XmrNetwork,
+            coin1: q.Coin, network1: q.Network,
+            coin2: b.Coin, network2: b.Network,
             depositAmount: probe, ct);
 
         if (amount is null && min is > 0m)
         {
             probe = min.Value * 1.1m;
             (amount, _, tvFiat) = await EstimateAsync(
-                opt.UsdtCoin, opt.UsdtNetwork,
-                opt.XmrCoin, opt.XmrNetwork,
+                q.Coin, q.Network,
+                b.Coin, b.Network,
                 probe, ct);
         }
 
         if (amount is null or <= 0m) return null;
+        // amount = base received for `probe` of quote → quote spent per 1 base.
         return MakeResult(query, probe / amount.Value, CalcMinUsd(min, tvFiat, probe));
     }
 
