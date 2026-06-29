@@ -157,7 +157,7 @@ public sealed class QuickexClient : IQuickexClient
         var (amt, min) = await FetchRateAsync(
             baseI.Value.Currency, baseI.Value.Network,
             quoteI.Value.Currency, quoteI.Value.Network,
-            probe, baseI.Value.Currency, ct);
+            probe, baseI.Value.Currency, ct, isFixed: query.Fixed);
 
         if (amt is null && min is > 0m)
         {
@@ -165,7 +165,7 @@ public sealed class QuickexClient : IQuickexClient
             (amt, _) = await FetchRateAsync(
                 baseI.Value.Currency, baseI.Value.Network,
                 quoteI.Value.Currency, quoteI.Value.Network,
-                probe, baseI.Value.Currency, ct);
+                probe, baseI.Value.Currency, ct, isFixed: query.Fixed);
         }
 
         if (amt is null || amt <= 0m) return null;
@@ -231,7 +231,8 @@ public sealed class QuickexClient : IQuickexClient
         string fromCcy, string fromNet,
         string toCcy, string toNet,
         decimal depositAmount, string depositCcy,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isFixed = false)
     {
         var qs = $"exchangeType=crypto" +
                  $"&instrumentFromCurrencyTitle={Uri.EscapeDataString(fromCcy)}" +
@@ -240,7 +241,7 @@ public sealed class QuickexClient : IQuickexClient
                  $"&instrumentToNetworkTitle={Uri.EscapeDataString(toNet)}" +
                  $"&claimedDepositAmount={depositAmount.ToString(CultureInfo.InvariantCulture)}" +
                  $"&claimedDepositAmountCurrency={Uri.EscapeDataString(depositCcy)}" +
-                 $"&rateMode=FLOATING" +
+                 $"&rateMode={(isFixed ? "FIXED" : "FLOATING")}" +
                  $"&markup=0";
 
         if (!string.IsNullOrWhiteSpace(opt.ReferrerId))

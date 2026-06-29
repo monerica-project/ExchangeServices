@@ -113,7 +113,7 @@ public sealed class ChangeNowClient : IChangeNowClient
         if (string.IsNullOrWhiteSpace(coinFromRaw) || string.IsNullOrWhiteSpace(coinToRaw))
             return null;
 
-        var flows = BuildFlowAttempts(opt.Flow);
+        var flows = query.Fixed ? BuildFixedFlowOnly() : BuildFlowAttempts(opt.Flow);
 
         const decimal fromAmountUsed = 1m;
 
@@ -260,6 +260,11 @@ public sealed class ChangeNowClient : IChangeNowClient
 
     private static List<string> BuildStandardFlowOnly()
         => new() { "standard" };
+
+    // Fixed mode: request a fixed-rate quote only. Falling back to "standard" would
+    // return a floating quote mislabeled as fixed, so we intentionally do not.
+    private static List<string> BuildFixedFlowOnly()
+        => new() { "fixed-rate" };
 
     private static List<string> BuildFlowAttempts(string? configuredFlow)
     {

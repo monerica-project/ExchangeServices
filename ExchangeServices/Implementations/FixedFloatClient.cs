@@ -60,7 +60,7 @@ public sealed class FixedFloatClient : IFixedFloatClient
         foreach (var fromCcy in CurrencyCodeCandidates(query.Base))
             foreach (var toCcy in CurrencyCodeCandidates(query.Quote))
             {
-                var (data, toBlocked) = await TryQuoteAsync("SELL", fromCcy, toCcy, attempts, ct);
+                var (data, toBlocked) = await TryQuoteAsync("SELL", fromCcy, toCcy, attempts, query.Fixed, ct);
                 if (toBlocked) return null; // quote currency unavailable — nothing to quote
                 if (data is null) continue;
 
@@ -90,7 +90,7 @@ public sealed class FixedFloatClient : IFixedFloatClient
         foreach (var fromCcy in CurrencyCodeCandidates(query.Quote)) // USDTTRC / BTC / ETH
             foreach (var toCcy in CurrencyCodeCandidates(query.Base))   // XMR
             {
-                var (data, toBlocked) = await TryQuoteAsync("BUY", fromCcy, toCcy, attempts, ct);
+                var (data, toBlocked) = await TryQuoteAsync("BUY", fromCcy, toCcy, attempts, false, ct);
                 if (toBlocked) return null; // XMR payout under maintenance/offline — no buy quote exists
                 if (data is null) continue;
 
@@ -120,12 +120,12 @@ public sealed class FixedFloatClient : IFixedFloatClient
     // under maintenance/offline/out of reserve — caller should stop entirely.
     private async Task<(PriceDataDto? data, bool toBlocked)> TryQuoteAsync(
         string leg, string fromCcy, string toCcy,
-        IEnumerable<(string direction, decimal amount)> attempts, CancellationToken ct)
+        IEnumerable<(string direction, decimal amount)> attempts, bool fixedRate, CancellationToken ct)
     {
         foreach (var (direction, amount) in attempts)
             foreach (var type in RateTypes)
             {
-                var resp = await PostPriceAsync(type, fromCcy, toCcy, direction, amount, ct);
+                var resp = await PostPriceAsync(type, fromCcy, toCcy, direction, amount, fixedRate, ct);
 
                 if (resp is null)
                 {
@@ -157,7 +157,7 @@ public sealed class FixedFloatClient : IFixedFloatClient
                         var sideMin = direction == "to" ? data.To?.Min : data.From?.Min;
                         if (sideMin is decimal min && min > amount)
                         {
-                            var retry = await PostPriceAsync(type, fromCcy, toCcy, direction, min, ct);
+                            var retry = await PostPriceAsync(type, fromCcy, toCcy, direction, min, fixedRate, ct);
                             if (retry?.Code == 0 && IsUsable(retry.Data)) return (retry.Data, false);
                         }
                     }
@@ -181,11 +181,14 @@ public sealed class FixedFloatClient : IFixedFloatClient
     }
 
     private async Task<PriceResponseDto?> PostPriceAsync(
-        string type, string fromCcy, string toCcy, string direction, decimal amount, CancellationToken ct)
+        string type, string fromCcy, string toCcy, string direction, decimal amount, bool fixedRate, CancellationToken ct)
     {
         var req = new PriceRequestDto
         {
-            Type = type,
+            // fixedRate forces a FIXED quote; otherwise keep today's behavior (the
+            // RateTypes loop value, float then fixed). This req object is the exact
+            // body that PostSignedAsync serializes, signs (X-API-SIGN), and sends.
+            Type = fixedRate ? "fixed" : type,
             FromCcy = fromCcy,
             ToCcy = toCcy,
             Direction = direction,

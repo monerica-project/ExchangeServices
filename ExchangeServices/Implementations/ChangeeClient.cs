@@ -41,7 +41,7 @@ public sealed class ChangeeClient : IChangeeClient
         var from = ResolveSymbol(query.Base);
         var to = ResolveSymbol(query.Quote);
 
-        var dto = await GetRateAsync(from, to, 1m, ct);
+        var dto = await GetRateAsync(from, to, 1m, query.Fixed, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
         Console.WriteLine($"[CHANGEE SELL] rate={dto.Rate}");
@@ -69,7 +69,7 @@ public sealed class ChangeeClient : IChangeeClient
         var to = ResolveSymbol(query.Base);  // XMR
 
         var probeUsdt = query.ProbeAmount ?? 200m;
-        var dto = await GetRateAsync(from, to, probeUsdt, ct);
+        var dto = await GetRateAsync(from, to, probeUsdt, false, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
         // rate = XMR received for probeUsdt USDT → invert to get USDT per XMR
@@ -122,10 +122,11 @@ public sealed class ChangeeClient : IChangeeClient
     // GET /v1/api/rate?key=...&from=XMR&to=USDT&amount=1&fix=0
     // =========================
     private async Task<ChangeeRateResponse?> GetRateAsync(
-        string from, string to, decimal amount, CancellationToken ct)
+        string from, string to, decimal amount, bool fixedRate, CancellationToken ct)
     {
         var amountStr = amount.ToString("0.########", CultureInfo.InvariantCulture);
-        var url = $"/v1/api/rate?key={opt.ApiKey}&from={from}&to={to}&amount={amountStr}&fix=0";
+        var fix = fixedRate ? 1 : 0; // 1 = FIXED rate, 0 = FLOATING (default, unchanged)
+        var url = $"/v1/api/rate?key={opt.ApiKey}&from={from}&to={to}&amount={amountStr}&fix={fix}";
 
         var body = await GetAsync(url, ct);
         if (body is null) return null;

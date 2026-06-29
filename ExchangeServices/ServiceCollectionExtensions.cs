@@ -59,7 +59,7 @@ public static class ServiceCollectionExtensions
 
         //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
         services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
-        services.AddSwapter(config);   // two-way XMR<->BTC/ETH/USDT
+        // services.AddSwapter(config); // removed — flagged as a scam on Monerica
 
         // auth issues 
         services.AddSwapuz(config);
@@ -723,6 +723,7 @@ public static class ServiceCollectionExtensions
 
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IFixedFloatClient>());
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IFixedFloatClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IFixedFloatClient>());
 
         return services;
     }

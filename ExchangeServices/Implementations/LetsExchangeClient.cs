@@ -49,13 +49,13 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
         // Try 1 first, but if min_amount > 1, re-try with min
         var amtIn = 1m;
 
-        var info = await PostInfoAsync(isRevert: false, fromCoin, toCoin, fromNet, toNet, amtIn, ct);
+        var info = await PostInfoAsync(isRevert: false, fromCoin, toCoin, fromNet, toNet, amtIn, query.Fixed, ct);
         if (info is null) return null;
 
         if (info.MinAmount > 0 && amtIn < info.MinAmount)
         {
             amtIn = RoundUp(info.MinAmount * 1.05m);
-            info = await PostInfoAsync(isRevert: false, fromCoin, toCoin, fromNet, toNet, amtIn, ct);
+            info = await PostInfoAsync(isRevert: false, fromCoin, toCoin, fromNet, toNet, amtIn, query.Fixed, ct);
             if (info is null) return null;
         }
 
@@ -92,7 +92,7 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
 
         foreach (var want in targets)
         {
-            var info = await PostInfoAsync(isRevert: true, fromCoin, toCoin, fromNet, toNet, want, ct);
+            var info = await PostInfoAsync(isRevert: true, fromCoin, toCoin, fromNet, toNet, want, false, ct);
             if (info is null || info.Amount <= 0) continue;
 
             var usdtNeeded = info.Amount;          // amount to send
@@ -200,6 +200,7 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
         string networkFrom,
         string networkTo,
         decimal amount,
+        bool fixedRate,
         CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 60));
@@ -213,7 +214,9 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
             NetworkTo = networkTo,
             Amount = amount,
             AffiliateId = opt.AffiliateId,
-            Float = opt.UseFloatRate
+            // fixedRate requests a FIXED quote (float=false); otherwise keep today's
+            // floating behavior (opt.UseFloatRate) unchanged.
+            Float = fixedRate ? false : opt.UseFloatRate
         };
 
         var json = JsonSerializer.Serialize(body, JsonOpt);

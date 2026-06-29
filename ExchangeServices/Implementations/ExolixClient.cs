@@ -23,8 +23,9 @@ public sealed class ExolixClient : IExolixClient
     private readonly object _apiMinAmountLock = new();
     public decimal MinAmountUsd => _apiMinAmountUsd ?? opt.MinAmountUsd;
 
-    // Always use float — fixed rates are consistently inflated.
+    // Default to float; fixed-rate quotes are requested only when the query asks for them.
     private const string RateTypeFloat = "float";
+    private const string RateTypeFixed = "fixed";
 
     // Exolix does NOT carry USDT on Tron, and routes XMR<->USDT on EVM/SOL chains.
     // USDT is ~$1 on every chain, so any of these is a valid USDT/XMR price. ETH first;
@@ -134,7 +135,7 @@ public sealed class ExolixClient : IExolixClient
     // SELL: send 1 XMR → read toAmount (USDT received) directly.
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: false, amount: 1m, ct);
+        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: false, amount: 1m, fixedRate: query.Fixed, ct);
         if (rate is null || rate.FromAmount <= 0 || rate.ToAmount <= 0) return null;
 
         var px = rate.ToAmount / rate.FromAmount;
@@ -146,7 +147,7 @@ public sealed class ExolixClient : IExolixClient
     // BUY: how much USDT to send to receive 1 XMR.
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: true, amount: query.ProbeAmount ?? 500m, ct);
+        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: true, amount: query.ProbeAmount ?? 500m, fixedRate: false, ct);
         if (rate is null || rate.FromAmount <= 0 || rate.ToAmount <= 0) return null;
 
         // coinFrom is USDT here, so rate.MinAmount is in USDT ≈ USD.
@@ -165,7 +166,7 @@ public sealed class ExolixClient : IExolixClient
     // Quote XMR<->USDT, resolving the USDT side to a network Exolix actually pairs with
     // XMR (never Tron). Tries the memoized network first, then the preference ladder.
     private async Task<RateResponse?> QuoteXmrUsdtAsync(
-        PriceQuery query, bool usdtIsFrom, decimal amount, CancellationToken ct)
+        PriceQuery query, bool usdtIsFrom, decimal amount, bool fixedRate, CancellationToken ct)
     {
         var xmr  = (query.Base.Ticker  ?? "XMR").Trim().ToUpperInvariant();
         var usdt = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
@@ -180,8 +181,8 @@ public sealed class ExolixClient : IExolixClient
         {
             // XMR side needs no network; only the USDT side is network-qualified.
             var rate = usdtIsFrom
-                ? await GetRateAsync(usdt, net, xmr, null, amount, ct)   // BUY:  USDT/net -> XMR
-                : await GetRateAsync(xmr, null, usdt, net, amount, ct);  // SELL: XMR -> USDT/net
+                ? await GetRateAsync(usdt, net, xmr, null, amount, fixedRate, ct)   // BUY:  USDT/net -> XMR
+                : await GetRateAsync(xmr, null, usdt, net, amount, fixedRate, ct);  // SELL: XMR -> USDT/net
 
             if (rate is not null && rate.FromAmount > 0 && rate.ToAmount > 0)
             {
@@ -203,14 +204,14 @@ public sealed class ExolixClient : IExolixClient
     private async Task<RateResponse?> GetRateAsync(
         string coinFrom, string? networkFrom,
         string coinTo, string? networkTo,
-        decimal amount, CancellationToken ct)
+        decimal amount, bool fixedRate, CancellationToken ct)
     {
         var qs = new List<string>
         {
             $"coinFrom={Uri.EscapeDataString(coinFrom)}",
             $"coinTo={Uri.EscapeDataString(coinTo)}",
             $"amount={amount.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            $"rateType={RateTypeFloat}"
+            $"rateType={(fixedRate ? RateTypeFixed : RateTypeFloat)}"
         };
 
         if (!string.IsNullOrWhiteSpace(networkFrom))

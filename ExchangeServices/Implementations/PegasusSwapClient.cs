@@ -29,8 +29,9 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
     public string? SiteUrl     => opt.SiteUrl;
     public char PrivacyLevel => opt.PrivacyLevel;
     public decimal MinAmountUsd => opt.MinAmountUsd;
-    // typeSwap=2 → float (typeSwap=1 is fixed — DO NOT USE for price comparison)
+    // typeSwap=2 → float, typeSwap=1 → fixed
     private const string TypeSwapFloat = "2";
+    private const string TypeSwapFixed = "1";
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -93,6 +94,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
             networkFrom: networkFrom,
             networkTo: networkTo,
             lastSource: "deposit",
+            fixedRate: query.Fixed,
             ct: ct
         );
 
@@ -137,6 +139,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
             networkFrom: networkFrom,
             networkTo: networkTo,
             lastSource: "deposit",
+            fixedRate: false,
             ct: ct
         );
 
@@ -169,15 +172,17 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
         string? networkFrom,
         string? networkTo,
         string lastSource,
+        bool fixedRate,
         CancellationToken ct)
     {
+        var typeSwap = fixedRate ? TypeSwapFixed : TypeSwapFloat;
         var qs = new List<string>
         {
             $"amount={amount.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             $"coinFrom={Uri.EscapeDataString(coinFrom)}",
             $"coinTo={Uri.EscapeDataString(coinTo)}",
             $"lastSource={Uri.EscapeDataString(lastSource)}",
-            $"typeSwap={TypeSwapFloat}"   // <- 2 = float, 1 = fixed
+            $"typeSwap={typeSwap}"   // <- 2 = float, 1 = fixed
         };
 
         if (!string.IsNullOrWhiteSpace(networkFrom))

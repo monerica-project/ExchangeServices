@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using ExchangeServices.Abstractions;
 using ExchangeServices.Interfaces;
 using ExchangeServices.Models;
@@ -126,8 +127,36 @@ public sealed class CypherGoatClient : ICypherGoatClient
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────
-    public Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExchangeCurrency>>(Array.Empty<ExchangeCurrency>());
+    // api.cyphergoat.com has no coins/currencies endpoint (only /estimate, /swap,
+    // /transaction). CypherGoat's full supported-coin list is rendered server-side
+    // into the public homepage (opt.CoinListUrl) inside the coin-selection modal as
+    //   <div data-ticker="usdt" data-network="tron" data-name="Tether USD" ...>
+    // where data-ticker/data-network are exactly the coin1/network1 the /estimate
+    // call consumes (both lowercased). We fetch that page and parse those tuples.
+    private static readonly Regex CoinDivRegex = new(
+        "<div\\s+data-ticker=\"(?<ticker>[^\"]*)\"\\s+data-network=\"(?<network>[^\"]*)\"",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public async Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
+    {
+        var html = await GetAsync(opt.CoinListUrl, ct);
+        if (string.IsNullOrEmpty(html)) return Array.Empty<ExchangeCurrency>();
+
+        return CoinDivRegex.Matches(html)
+            .Select(m => (
+                Ticker: m.Groups["ticker"].Value.Trim(),
+                Network: m.Groups["network"].Value.Trim()))
+            .Where(x => x.Ticker.Length > 0 && x.Network.Length > 0)
+            .Select(x => new ExchangeCurrency(
+                ExchangeId: $"{x.Ticker}|{x.Network}".ToLowerInvariant(),
+                Ticker: x.Ticker.ToUpperInvariant(),
+                Network: x.Network.ToLowerInvariant()))
+            .GroupBy(c => c.ExchangeId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(c => c.Ticker, StringComparer.Ordinal)
+            .ThenBy(c => c.Network, StringComparer.Ordinal)
+            .ToList();
+    }
 
     // ── Core estimate call ────────────────────────────────────────────────────
     // Returns (bestAmount, minAmount, tradeValueFiat).

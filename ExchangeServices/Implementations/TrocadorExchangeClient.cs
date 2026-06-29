@@ -60,7 +60,7 @@ public sealed class TrocadorClient : ITrocadorClient
 
         if (tickerFrom is null || tickerTo is null) return null;
 
-        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, amountFrom: 1m, ct);
+        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, amountFrom: 1m, ct, isFixed: query.Fixed);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
 
         await Task.WhenAll(rateTask, minTask);
@@ -185,13 +185,15 @@ public sealed class TrocadorClient : ITrocadorClient
         string tickerFrom, string networkFrom,
         string tickerTo, string networkTo,
         decimal amountFrom,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isFixed = false)
     {
         var qs = $"ticker_from={Uri.EscapeDataString(tickerFrom)}" +
                  $"&network_from={Uri.EscapeDataString(networkFrom)}" +
                  $"&ticker_to={Uri.EscapeDataString(tickerTo)}" +
                  $"&network_to={Uri.EscapeDataString(networkTo)}" +
                  $"&amount_from={amountFrom.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}" +
+                 $"&type={(isFixed ? "fixed" : "float")}" +
                  $"&payment=False";
 
         using var req = new HttpRequestMessage(HttpMethod.Get, $"/new_rate?{qs}");

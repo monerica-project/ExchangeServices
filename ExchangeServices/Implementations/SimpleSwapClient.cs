@@ -73,7 +73,7 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
         if (from is null || to is null) return null;
 
         // Send exactly 1 XMR → USDT; result is direct per-XMR sell price (matches site default)
-        var usdtReceived = await FetchEstimateAsync(from, to, amount: SellProbeXmr, ct);
+        var usdtReceived = await FetchEstimateAsync(from, to, amount: SellProbeXmr, ct, query.Fixed);
         if (usdtReceived is null || usdtReceived <= 0) return null;
 
         // API returns 0.4% less USDT due to affiliate fee — correct back to true rate
@@ -243,14 +243,14 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
     // ── Estimate ──────────────────────────────────────────────────────────────
 
     private async Task<decimal?> FetchEstimateAsync(
-        CurrencyDto from, CurrencyDto to, decimal amount, CancellationToken ct)
+        CurrencyDto from, CurrencyDto to, decimal amount, CancellationToken ct, bool fixedRate = false)
     {
         var qs = $"tickerFrom={Uri.EscapeDataString(from.Symbol.ToLowerInvariant())}" +
                  $"&networkFrom={Uri.EscapeDataString(from.Network)}" +
                  $"&tickerTo={Uri.EscapeDataString(to.Symbol.ToLowerInvariant())}" +
                  $"&networkTo={Uri.EscapeDataString(to.Network)}" +
                  $"&amount={amount.ToString("G", CultureInfo.InvariantCulture)}" +
-                 $"&fixed=false";
+                 $"&fixed={(fixedRate ? "true" : "false")}";
 
         return await CallEstimateAsync(qs, ct);
     }

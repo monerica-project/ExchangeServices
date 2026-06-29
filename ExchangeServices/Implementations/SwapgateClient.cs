@@ -135,13 +135,13 @@ public sealed class SwapgateClient : ISwapgateClient
 
         var probe = opt.SellProbeAmountXmr;  // probe is in the base (XMR) currency
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
-            baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, ct);
+            baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, query.Fixed, ct);
 
         if (amountToGet is null && minRequired is > 0m)
         {
             probe = minRequired.Value * 1.1m;
             (amountToGet, _) = await GetRateWithMinAsync(
-                baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, ct);
+                baseI.Value.Currency, baseI.Value.Network, quoteI.Value.Currency, quoteI.Value.Network, probe, query.Fixed, ct);
         }
 
         if (amountToGet is null || amountToGet <= 0m) return null;
@@ -161,13 +161,13 @@ public sealed class SwapgateClient : ISwapgateClient
         // Probe is in the QUOTE currency (PriceService sets it per quote: 0.01 BTC, 0.3 ETH; default USDT).
         var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
-            quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, ct);
+            quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, false, ct);
 
         if (amountToGet is null && minRequired is > 0m)
         {
             probe = minRequired.Value * 1.1m;
             (amountToGet, _) = await GetRateWithMinAsync(
-                quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, ct);
+                quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, false, ct);
         }
 
         if (amountToGet is null || amountToGet <= 0m) return null;
@@ -207,14 +207,15 @@ public sealed class SwapgateClient : ISwapgateClient
     private async Task<(decimal? amountToGet, decimal? minRequired)> GetRateWithMinAsync(
         string fromCurrency, string fromNetwork,
         string toCurrency, string toNetwork,
-        decimal depositAmount, CancellationToken ct)
+        decimal depositAmount, bool fixedRate, CancellationToken ct)
     {
+        var rateMode = fixedRate ? "FIXED" : "FLOATING"; // FLOATING is the default, unchanged
         var url = $"api/v1/rates/public/one" +
                   $"?instrumentFromCurrencyTitle={Uri.EscapeDataString(fromCurrency)}" +
                   $"&instrumentFromNetworkTitle={Uri.EscapeDataString(fromNetwork)}" +
                   $"&instrumentToCurrencyTitle={Uri.EscapeDataString(toCurrency)}" +
                   $"&instrumentToNetworkTitle={Uri.EscapeDataString(toNetwork)}" +
-                  $"&rateMode=FLOATING" +
+                  $"&rateMode={rateMode}" +
                   $"&claimedDepositAmount={depositAmount.ToString(CultureInfo.InvariantCulture)}" +
                   $"&markup=0";
 

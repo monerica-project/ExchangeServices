@@ -46,7 +46,7 @@ public sealed class SwapuzClient : ISwapuzClient
 
         // amount=1, so `result` is the net amount of `to` received for 1 `from` —
         // i.e. the per-unit sell price (post-fee), consistent with the buy side.
-        var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, 1m, ct);
+        var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, 1m, ct, query.Fixed);
         if (rate is null || rate.Result <= 0)
         {
             Console.WriteLine("[SWAPUZ SELL] rate null or result zero");
@@ -159,10 +159,12 @@ public sealed class SwapuzClient : ISwapuzClient
         string from, string fromNetwork,
         string to, string toNetwork,
         decimal amount,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool fixedRate = false)
     {
         var amountStr = amount.ToString("0.########", CultureInfo.InvariantCulture);
-        var url = $"/api/home/v1/rate/?from={from}&to={to}&amount={amountStr}&fromNetwork={fromNetwork}&toNetwork={toNetwork}&mode=float";
+        var mode = fixedRate ? "fixed" : "float";
+        var url = $"/api/home/v1/rate/?from={from}&to={to}&amount={amountStr}&fromNetwork={fromNetwork}&toNetwork={toNetwork}&mode={mode}";
 
         Console.WriteLine($"[SWAPUZ RATE] GET {url}");
 

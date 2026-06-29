@@ -50,8 +50,13 @@ namespace ExchangeServices.Implementations;
 /// Rate semantics:
 ///   Sell (XMR → USDT): direction="from", amount="1"
 ///                      data.to.amount is USDT received per 1 XMR (direct).
-///   Buy  (USDT → XMR): direction="to",   amount="1"
-///                      data.from.amount is USDT needed to receive 1 XMR (direct).
+///   Buy  (quote → XMR): NOT SUPPORTED by 0trace. In /v1/currencies, XMR is
+///                      listed as recv=true / send=false — the operator ACCEPTS
+///                      XMR deposits but never PAYS OUT XMR. Any /v1/price call
+///                      with toCcy="xmr" is rejected with HTTP 400
+///                      {"code":1,"msg":"INVALID_REQUEST"} regardless of
+///                      direction or amount. So a live buy quote is impossible;
+///                      GetBuyPriceAsync returns null by design (see below).
 /// </summary>
 public sealed class ZeroTraceClient : IZeroTraceClient
 {
@@ -98,7 +103,7 @@ public sealed class ZeroTraceClient : IZeroTraceClient
         if (string.IsNullOrWhiteSpace(fromCcy) || string.IsNullOrWhiteSpace(toCcy)) return null;
 
         var dto = await PostPriceAsync(
-            type: "float",
+            type: query.Fixed ? "fixed" : "float",
             fromCcy: fromCcy,
             toCcy: toCcy,
             direction: "from",
@@ -129,11 +134,20 @@ public sealed class ZeroTraceClient : IZeroTraceClient
 
     // =========================
     // BUY: ? quote → 1 XMR
-    // Use direction="from" (exact-input) — the same shape the SELL path uses
-    // successfully. 0trace's float quotes reject direction="to" (exact-output),
-    // which is why the old buy returned nothing for BTC/ETH. So: send a probe of
-    // the quote, read the XMR received (data.to.amount), and invert to get
-    // quote-per-XMR.
+    //
+    // ROOT CAUSE (verified against the live API 2026-06): 0trace does NOT sell
+    // XMR. In /v1/currencies, XMR is recv=true / send=false. Every /v1/price
+    // request with toCcy="xmr" returns HTTP 400 {"code":1,"msg":"INVALID_REQUEST"}
+    // — independent of direction ("from" or "to"), amount, or which quote asset
+    // funds it (btc/eth/usdt all fail identically). Control calls prove the
+    // request shape itself is fine: XMR->USDT (sell) and USDT->BTC both return
+    // code:0. The single distinguishing factor is the non-sendable destination.
+    //
+    // Therefore a live BUY quote for XMR is impossible at this provider and this
+    // method returns null. We still issue the probe (honoring query.ProbeAmount
+    // ?? 200m) so the moment 0trace flips XMR to send=true the price flows through
+    // with no code change: read the XMR received (data.to.amount) and divide the
+    // quote actually sent (data.from.amount) by it to get quote-per-XMR.
     // =========================
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
