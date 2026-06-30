@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -115,8 +116,141 @@ public sealed class BitXChangeClient : IBitXChangeClient
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────
-    public Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExchangeCurrency>>(Array.Empty<ExchangeCurrency>());
+    // BitXChange's proxy (api.bitxchange.io) exposes no single "list all coins"
+    // endpoint, but two endpoints together cover the full universe (discovered from
+    // the site's /api-docs: GET /crypto, /crypto/limits, /network, /price, /order):
+    //
+    //   GET /crypto/limits      → [{ "name": "<TICKER>", "min_deposit", "max_deposit" }, …]
+    //                             the authoritative list of every supported ticker.
+    //   GET /crypto?coin=TICKER → [{ "short_name": "USDT", "is_active": true,
+    //                               "deposit_networks":  [{ "name": "TRC20", "is_active": true }, …],
+    //                               "withdraw_networks": [{ "name": "ERC20", … }, …],
+    //                               "default_network":   { "name": "ERC20", … } }]
+    //                             per-coin networks (`coin` is an exact short_name filter;
+    //                             there is no bulk/"all" variant — bare /crypto 500s).
+    //
+    // The `short_name` (ticker) and network `name` are exactly the from/to and
+    // from_network/to_network values the /price endpoint consumes (e.g. USDT+TRC20,
+    // XMR+XMR). We enumerate the limits list, then fan out (bounded) one /crypto call
+    // per ticker, and emit one ExchangeCurrency per active network.
+    public async Task<IReadOnlyList<ExchangeCurrency>> GetCurrenciesAsync(CancellationToken ct = default)
+    {
+        var baseUrl = opt.BaseUrl.TrimEnd('/');
+
+        // 1. Full ticker universe.
+        var limitsBody = await GetAsync($"{baseUrl}/crypto/limits", ct);
+        if (string.IsNullOrEmpty(limitsBody)) return Array.Empty<ExchangeCurrency>();
+
+        var tickers = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(limitsBody);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    if (el.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String)
+                    {
+                        var s = n.GetString()?.Trim();
+                        if (!string.IsNullOrEmpty(s)) tickers.Add(s);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BITXCHANGE] limits parse error: {ex.Message}");
+            return Array.Empty<ExchangeCurrency>();
+        }
+
+        tickers = tickers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (tickers.Count == 0) return Array.Empty<ExchangeCurrency>();
+
+        // 2. Per-ticker networks (bounded concurrency).
+        var bag = new ConcurrentBag<ExchangeCurrency>();
+        using var gate = new SemaphoreSlim(Math.Clamp(opt.CurrencyFetchConcurrency, 1, 32));
+
+        var tasks = tickers.Select(async ticker =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var body = await GetAsync($"{baseUrl}/crypto?coin={Uri.EscapeDataString(ticker)}", ct);
+                if (string.IsNullOrEmpty(body)) return;
+                AddCoinNetworks(body, bag);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BITXCHANGE] crypto parse error for {ticker}: {ex.Message}");
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+        await Task.WhenAll(tasks);
+
+        return bag
+            .GroupBy(c => c.ExchangeId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(c => c.Ticker, StringComparer.Ordinal)
+            .ThenBy(c => c.Network, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    // Parse a /crypto?coin=… response (array of coin objects) and add one
+    // ExchangeCurrency per active deposit/withdraw network of each active coin.
+    private static void AddCoinNetworks(string body, ConcurrentBag<ExchangeCurrency> bag)
+    {
+        using var doc = JsonDocument.Parse(body);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+
+        foreach (var coin in doc.RootElement.EnumerateArray())
+        {
+            if (!coin.TryGetProperty("short_name", out var snEl) || snEl.ValueKind != JsonValueKind.String)
+                continue;
+            var ticker = snEl.GetString()?.Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(ticker)) continue;
+
+            // Skip wholly inactive coins.
+            if (coin.TryGetProperty("is_active", out var act) && act.ValueKind == JsonValueKind.False)
+                continue;
+
+            var networks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectActiveNetworks(coin, "deposit_networks", networks);
+            CollectActiveNetworks(coin, "withdraw_networks", networks);
+
+            // Fall back to the default network if the lists were empty.
+            if (networks.Count == 0 &&
+                coin.TryGetProperty("default_network", out var dn) && dn.ValueKind == JsonValueKind.Object &&
+                dn.TryGetProperty("name", out var dnn) && dnn.ValueKind == JsonValueKind.String)
+            {
+                var d = dnn.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(d)) networks.Add(d);
+            }
+
+            foreach (var net in networks)
+                bag.Add(new ExchangeCurrency(
+                    ExchangeId: $"{ticker}|{net}",
+                    Ticker: ticker,
+                    Network: net));
+        }
+    }
+
+    private static void CollectActiveNetworks(JsonElement coin, string prop, HashSet<string> into)
+    {
+        if (!coin.TryGetProperty(prop, out var arr) || arr.ValueKind != JsonValueKind.Array) return;
+        foreach (var net in arr.EnumerateArray())
+        {
+            if (net.ValueKind != JsonValueKind.Object) continue;
+            if (net.TryGetProperty("is_active", out var a) && a.ValueKind == JsonValueKind.False) continue;
+            if (net.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String)
+            {
+                var s = nm.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(s)) into.Add(s);
+            }
+        }
+    }
 
     // ── Core rate call ──────────────────────────────────────────────────────────
     // Sends `amount` of `from` and returns (to_amount received, min_deposit).

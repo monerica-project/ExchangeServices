@@ -54,6 +54,7 @@ public static class ServiceCollectionExtensions
 
 
         services.AddChangeHero(config);
+        services.AddBitania(config);
 
         //        services.AddDevilExchange(config);
 
@@ -236,6 +237,24 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IStereoSwapClient>());
         services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IStereoSwapClient>());
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IStereoSwapClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddBitania(this IServiceCollection services, IConfiguration config)
+    {
+        // ── Bitania ─────────────────────────────────────────────────────────────────
+        services.Configure<BitaniaOptions>(config.GetSection("Bitania"));
+
+        services.AddHttpClient<IBitaniaClient, BitaniaClient>(client =>
+        {
+            var seconds = config.GetValue<int>("Bitania:RequestTimeoutSeconds", 10);
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 2, 30));
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IBitaniaClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IBitaniaClient>());
+        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IBitaniaClient>());
 
         return services;
     }
