@@ -69,13 +69,19 @@ public sealed class StereoSwapClient : IStereoSwapClient
     {
         var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
 
+        // USDT price is network-agnostic, and StereoSwap does NOT list XMR<->USDT on
+        // Tron/TRC20 — only ETH/BSC/etc. So ALWAYS quote USDT on our configured network
+        // (default ETH), even when the caller requests USDT-on-Tron. Otherwise a USDT:Tron
+        // request returns no quote and StereoSwap silently drops off the USDT page.
+        if (ticker == "USDT")
+            return (ticker, string.IsNullOrWhiteSpace(opt.UsdtNetwork) ? "ETH" : opt.UsdtNetwork.Trim().ToUpperInvariant());
+
         if (!string.IsNullOrWhiteSpace(a.Network))
             return (ticker, a.Network!.Trim().ToUpperInvariant());
 
         var native = ticker switch
         {
             "XMR" => string.IsNullOrWhiteSpace(opt.XmrNetwork) ? "XMR" : opt.XmrNetwork.Trim().ToUpperInvariant(),
-            "USDT" => string.IsNullOrWhiteSpace(opt.UsdtNetwork) ? "ETH" : opt.UsdtNetwork.Trim().ToUpperInvariant(),
             _ => ticker, // BTC→BTC, ETH→ETH, … native chain == ticker
         };
         return (ticker, native);
