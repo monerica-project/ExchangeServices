@@ -172,7 +172,7 @@ public sealed class ChangeHeroClient : IChangeHeroClient
             var root = doc.RootElement;
             if (root.TryGetProperty("error", out var err))
             {
-                Console.WriteLine($"[CHANGEHERO] error: {err}");
+                ExchangeLog.Debug($"[CHANGEHERO] error: {err}");
                 return null;
             }
             if (root.TryGetProperty("result", out var res))
@@ -184,7 +184,7 @@ public sealed class ChangeHeroClient : IChangeHeroClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CHANGEHERO] parse error: {ex.Message} — {body}");
+            ExchangeLog.Debug($"[CHANGEHERO] parse error: {ex.Message} — {body}");
             return null;
         }
     }
@@ -241,21 +241,21 @@ public sealed class ChangeHeroClient : IChangeHeroClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[CHANGEHERO] Timed out: {method}");
+                ExchangeLog.Debug($"[CHANGEHERO] Timed out: {method}");
                 return null;
             }
 
             using var resp = await sendTask;
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
 
-            Console.WriteLine($"[CHANGEHERO] {method} HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            ExchangeLog.Debug($"[CHANGEHERO] {method} HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 
             if (!resp.IsSuccessStatusCode) return null;
             return body;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CHANGEHERO] Error ({method}): {ex.Message}");
+            ExchangeLog.Debug($"[CHANGEHERO] Error ({method}): {ex.Message}");
             return null;
         }
     }

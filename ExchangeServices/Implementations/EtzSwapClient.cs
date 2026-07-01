@@ -125,7 +125,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
                 if (dto?.Data is null) continue;
 
                 _resolved[key] = (netFrom, netTo);
-                Console.WriteLine($"[ETZSWAP] resolved {coinFrom}/{netFrom} -> {coinTo}/{netTo}");
+                ExchangeLog.Debug($"[ETZSWAP] resolved {coinFrom}/{netFrom} -> {coinTo}/{netTo}");
                 return dto.Data;
             }
 
@@ -205,7 +205,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
 
             string Nets(string c) => map.TryGetValue(c, out var l) && l.Count > 0
                 ? string.Join(",", l.Select(x => x.Key)) : "(none)";
-            Console.WriteLine($"[ETZSWAP] catalog: {map.Count} coins. USDT=[{Nets("USDT")}] XMR=[{Nets("XMR")}]");
+            ExchangeLog.Debug($"[ETZSWAP] catalog: {map.Count} coins. USDT=[{Nets("USDT")}] XMR=[{Nets("XMR")}]");
 
             return _catalog;
         }
@@ -375,7 +375,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
 
             if (!resp.IsSuccessStatusCode)
             {
-                Console.WriteLine(
+                ExchangeLog.Debug(
                     $"[ETZSWAP] {(int)resp.StatusCode} {coinFrom}/{networkFrom}->{coinTo}/{networkTo} body={Trim(raw)}");
                 return null;
             }
@@ -386,7 +386,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
         catch (OperationCanceledException) { return null; }
         catch (JsonException ex)
         {
-            Console.WriteLine($"[ETZSWAP] parse error: {ex.Message}");
+            ExchangeLog.Debug($"[ETZSWAP] parse error: {ex.Message}");
             return null;
         }
     }

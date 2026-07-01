@@ -92,7 +92,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey))
         {
-            Console.WriteLine("[STEREOSWAP] missing ApiKey — set StereoSwap:ApiKey in appsettings.json");
+            ExchangeLog.Debug("[STEREOSWAP] missing ApiKey — set StereoSwap:ApiKey in appsettings.json");
             return null;
         }
 
@@ -124,7 +124,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey))
         {
-            Console.WriteLine("[STEREOSWAP] missing ApiKey — set StereoSwap:ApiKey in appsettings.json");
+            ExchangeLog.Debug("[STEREOSWAP] missing ApiKey — set StereoSwap:ApiKey in appsettings.json");
             return null;
         }
 
@@ -190,7 +190,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
             // If below minimum the API likely returns receive_amount=0 or an error
             if (minAmount > 0m && amount < minAmount)
             {
-                Console.WriteLine($"[STEREOSWAP] below min {minAmount} ({fromCoin}→{toCoin})");
+                ExchangeLog.Debug($"[STEREOSWAP] below min {minAmount} ({fromCoin}→{toCoin})");
                 return (null, minAmount);
             }
 
@@ -200,12 +200,12 @@ public sealed class StereoSwapClient : IStereoSwapClient
                 if (v > 0m) return (v, minAmount > 0m ? minAmount : null);
             }
 
-            Console.WriteLine($"[STEREOSWAP] no receive_amount in: {body}");
+            ExchangeLog.Debug($"[STEREOSWAP] no receive_amount in: {body}");
             return (null, minAmount > 0m ? minAmount : null);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[STEREOSWAP] parse error: {ex.Message} — {body}");
+            ExchangeLog.Debug($"[STEREOSWAP] parse error: {ex.Message} — {body}");
             return (null, null);
         }
     }
@@ -233,7 +233,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine("[STEREOSWAP] Timed out");
+                ExchangeLog.Debug("[STEREOSWAP] Timed out");
                 return null;
             }
 
@@ -242,7 +242,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
 
             if (!resp.IsSuccessStatusCode)
             {
-                Console.WriteLine($"[STEREOSWAP] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+                ExchangeLog.Debug($"[STEREOSWAP] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
                 return null;
             }
 
@@ -250,7 +250,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[STEREOSWAP] Error: {ex.Message}");
+            ExchangeLog.Debug($"[STEREOSWAP] Error: {ex.Message}");
             return null;
         }
     }

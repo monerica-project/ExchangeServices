@@ -46,7 +46,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
         this.http.Timeout = Timeout.InfiniteTimeSpan;
     }
 
-    private static void Log(string msg) => Console.WriteLine($"[PEGASUS] {msg}");
+    private static void Log(string msg) => ExchangeLog.Debug($"[PEGASUS] {msg}");
 
     private static string Trunc(string? s, int max = 1500)
     {

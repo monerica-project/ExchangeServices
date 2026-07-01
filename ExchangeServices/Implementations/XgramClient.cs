@@ -33,7 +33,7 @@ public sealed class XgramClient : IXgramClient
         opt = options.Value;
     }
 
-    private static void Log(string msg) => Console.WriteLine($"[XGRAM] {msg}");
+    private static void Log(string msg) => ExchangeLog.Debug($"[XGRAM] {msg}");
 
     private static string Trunc(string? s, int max = 1200)
     {

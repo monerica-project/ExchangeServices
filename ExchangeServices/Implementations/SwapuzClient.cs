@@ -42,14 +42,14 @@ public sealed class SwapuzClient : ISwapuzClient
         var (fromTicker, fromNet) = ResolveTickerNetwork(query.Base);
         var (toTicker, toNet) = ResolveTickerNetwork(query.Quote);
 
-        Console.WriteLine($"[SWAPUZ SELL] from={fromTicker}/{fromNet}, to={toTicker}/{toNet}");
+        ExchangeLog.Debug($"[SWAPUZ SELL] from={fromTicker}/{fromNet}, to={toTicker}/{toNet}");
 
         // amount=1, so `result` is the net amount of `to` received for 1 `from` —
         // i.e. the per-unit sell price (post-fee), consistent with the buy side.
         var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, 1m, ct, query.Fixed);
         if (rate is null || rate.Result <= 0)
         {
-            Console.WriteLine("[SWAPUZ SELL] rate null or result zero");
+            ExchangeLog.Debug("[SWAPUZ SELL] rate null or result zero");
             return null;
         }
 
@@ -72,7 +72,7 @@ public sealed class SwapuzClient : ISwapuzClient
         var (usdtTicker, usdtNet) = ResolveTickerNetwork(query.Quote);
         var (xmrTicker, xmrNet) = ResolveTickerNetwork(query.Base);
 
-        Console.WriteLine($"[SWAPUZ BUY] from={usdtTicker}/{usdtNet}, to={xmrTicker}/{xmrNet}");
+        ExchangeLog.Debug($"[SWAPUZ BUY] from={usdtTicker}/{usdtNet}, to={xmrTicker}/{xmrNet}");
 
         // Probe in the QUOTE currency. PriceService sets ProbeAmount per quote
         // (e.g. 0.01 BTC, 0.3 ETH); default 200 suits USDT. Using a fixed 200 sent
@@ -82,12 +82,12 @@ public sealed class SwapuzClient : ISwapuzClient
         var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, probe, ct);
         if (rate is null || rate.Result <= 0)
         {
-            Console.WriteLine("[SWAPUZ BUY] rate null or result zero");
+            ExchangeLog.Debug("[SWAPUZ BUY] rate null or result zero");
             return null;
         }
 
         var usdtPerXmr = rate.Amount / rate.Result;
-        Console.WriteLine($"[SWAPUZ BUY] probe={rate.Amount}, xmrOut={rate.Result}, usdtPerXmr={usdtPerXmr}");
+        ExchangeLog.Debug($"[SWAPUZ BUY] probe={rate.Amount}, xmrOut={rate.Result}, usdtPerXmr={usdtPerXmr}");
 
         if (usdtPerXmr <= 0) return null;
 
@@ -113,7 +113,7 @@ public sealed class SwapuzClient : ISwapuzClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[SWAPUZ CURRENCIES] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[SWAPUZ CURRENCIES] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300)
             return Array.Empty<ExchangeCurrency>();
@@ -166,20 +166,20 @@ public sealed class SwapuzClient : ISwapuzClient
         var mode = fixedRate ? "fixed" : "float";
         var url = $"/api/home/v1/rate/?from={from}&to={to}&amount={amountStr}&fromNetwork={fromNetwork}&toNetwork={toNetwork}&mode={mode}";
 
-        Console.WriteLine($"[SWAPUZ RATE] GET {url}");
+        ExchangeLog.Debug($"[SWAPUZ RATE] GET {url}");
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         AddHeaders(req);
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[SWAPUZ RATE] Status={res?.Status}, Body={res?.Body}");
+        ExchangeLog.Debug($"[SWAPUZ RATE] Status={res?.Status}, Body={res?.Body}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 
         var dto = JsonSerializer.Deserialize<SwapuzRateResponse>(res.Body, SwapuzJsonOpt);
 
-        Console.WriteLine($"[SWAPUZ RATE] dto.Status={dto?.Status}, Rate={dto?.Result?.Rate}, Result={dto?.Result?.Result}");
+        ExchangeLog.Debug($"[SWAPUZ RATE] dto.Status={dto?.Status}, Rate={dto?.Result?.Rate}, Result={dto?.Result?.Result}");
 
         if (dto is null || dto.Status != 200 || dto.Result is null) return null;
 
@@ -200,11 +200,11 @@ public sealed class SwapuzClient : ISwapuzClient
         if (!string.IsNullOrWhiteSpace(opt.ApiKey))
         {
             req.Headers.TryAddWithoutValidation("Api-key", opt.ApiKey);
-            Console.WriteLine($"[SWAPUZ] Api-key={opt.ApiKey[..Math.Min(6, opt.ApiKey.Length)]}***");
+            ExchangeLog.Debug($"[SWAPUZ] Api-key={opt.ApiKey[..Math.Min(6, opt.ApiKey.Length)]}***");
         }
         else
         {
-            Console.WriteLine("[SWAPUZ] WARNING: ApiKey empty — sending unauthenticated");
+            ExchangeLog.Debug("[SWAPUZ] WARNING: ApiKey empty — sending unauthenticated");
         }
     }
 

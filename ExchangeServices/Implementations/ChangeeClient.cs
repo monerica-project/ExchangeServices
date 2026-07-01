@@ -44,7 +44,7 @@ public sealed class ChangeeClient : IChangeeClient
         var dto = await GetRateAsync(from, to, 1m, query.Fixed, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
-        Console.WriteLine($"[CHANGEE SELL] rate={dto.Rate}");
+        ExchangeLog.Debug($"[CHANGEE SELL] rate={dto.Rate}");
 
         return new PriceResult(
             Exchange: ExchangeKey,
@@ -75,7 +75,7 @@ public sealed class ChangeeClient : IChangeeClient
         // rate = XMR received for probeUsdt USDT → invert to get USDT per XMR
         var usdtPerXmr = probeUsdt / dto.Rate;
 
-        Console.WriteLine($"[CHANGEE BUY] rawRate={dto.Rate}, probeUsdt={probeUsdt}, usdtPerXmr={usdtPerXmr:F2}");
+        ExchangeLog.Debug($"[CHANGEE BUY] rawRate={dto.Rate}, probeUsdt={probeUsdt}, usdtPerXmr={usdtPerXmr:F2}");
 
         if (usdtPerXmr <= 0) return null;
 
@@ -99,7 +99,7 @@ public sealed class ChangeeClient : IChangeeClient
     {
         var body = await GetAsync($"/v1/api/currencies?key={opt.ApiKey}", ct);
 
-        Console.WriteLine($"[CHANGEE CURRENCIES] Body={body?[..Math.Min(300, body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[CHANGEE CURRENCIES] Body={body?[..Math.Min(300, body?.Length ?? 0)]}");
 
         if (body is null) return Array.Empty<ExchangeCurrency>();
 
@@ -133,7 +133,7 @@ public sealed class ChangeeClient : IChangeeClient
 
         var dto = JsonSerializer.Deserialize<ChangeeRateResponse>(body, ChangeeJsonOpt);
 
-        Console.WriteLine($"[CHANGEE RATE] from={from}, to={to}, amount={amountStr}, result={dto?.Result}, rate={dto?.Rate}");
+        ExchangeLog.Debug($"[CHANGEE RATE] from={from}, to={to}, amount={amountStr}, result={dto?.Result}, rate={dto?.Rate}");
 
         return dto;
     }
@@ -145,14 +145,14 @@ public sealed class ChangeeClient : IChangeeClient
     private async Task<string?> GetAsync(string url, CancellationToken ct)
     {
         // Log URL with key masked
-        Console.WriteLine($"[CHANGEE] GET {url.Replace(opt.ApiKey, "***")}");
+        ExchangeLog.Debug($"[CHANGEE] GET {url.Replace(opt.ApiKey, "***")}");
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("Accept", "application/json");
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[CHANGEE] Status={res?.Status}, Body={res?.Body}");
+        ExchangeLog.Debug($"[CHANGEE] Status={res?.Status}, Body={res?.Body}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 

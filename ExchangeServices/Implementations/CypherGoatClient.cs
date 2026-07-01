@@ -195,7 +195,7 @@ public sealed class CypherGoatClient : ICypherGoatClient
 
             if (min is > 0m && depositAmount < min.Value)
             {
-                Console.WriteLine($"[CYPHERGOAT] below min {min} for {coin1}→{coin2} amount={depositAmount}");
+                ExchangeLog.Debug($"[CYPHERGOAT] below min {min} for {coin1}→{coin2} amount={depositAmount}");
                 return (null, min, tvFiat);
             }
 
@@ -243,12 +243,12 @@ public sealed class CypherGoatClient : ICypherGoatClient
                 }
             }
 
-            Console.WriteLine($"[CYPHERGOAT] no usable amount in: {body}");
+            ExchangeLog.Debug($"[CYPHERGOAT] no usable amount in: {body}");
             return (null, min, tvFiat);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CYPHERGOAT] parse error: {ex.Message} — {body}");
+            ExchangeLog.Debug($"[CYPHERGOAT] parse error: {ex.Message} — {body}");
             return (null, null, null);
         }
     }
@@ -258,7 +258,7 @@ public sealed class CypherGoatClient : ICypherGoatClient
     private async Task<string?> GetAsync(string fullUrl, CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
-        Console.WriteLine($"[CYPHERGOAT] GET {fullUrl}");
+        ExchangeLog.Debug($"[CYPHERGOAT] GET {fullUrl}");
 
         try
         {
@@ -271,21 +271,21 @@ public sealed class CypherGoatClient : ICypherGoatClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[CYPHERGOAT] Timed out");
+                ExchangeLog.Debug($"[CYPHERGOAT] Timed out");
                 return null;
             }
 
             using var resp = await sendTask;
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
 
-            Console.WriteLine($"[CYPHERGOAT] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            ExchangeLog.Debug($"[CYPHERGOAT] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 
             if (!resp.IsSuccessStatusCode) return null;
             return body;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CYPHERGOAT] Error: {ex.Message}");
+            ExchangeLog.Debug($"[CYPHERGOAT] Error: {ex.Message}");
             return null;
         }
     }

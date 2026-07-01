@@ -267,7 +267,7 @@ public sealed class QuickexClient : IQuickexClient
                     var v = ParseDecimal(expEl);
                     if (v > 0m) min = v;
                 }
-                Console.WriteLine($"[QUICKEX] 422 min={min} ({fromCcy}→{toCcy})");
+                ExchangeLog.Debug($"[QUICKEX] 422 min={min} ({fromCcy}→{toCcy})");
                 return (null, min);
             }
 
@@ -278,12 +278,12 @@ public sealed class QuickexClient : IQuickexClient
                     if (v > 0m) return (v, null);
                 }
 
-            Console.WriteLine($"[QUICKEX] No rate field in: {body}");
+            ExchangeLog.Debug($"[QUICKEX] No rate field in: {body}");
             return (null, null);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[QUICKEX] Parse error: {ex.Message}");
+            ExchangeLog.Debug($"[QUICKEX] Parse error: {ex.Message}");
             return (null, null);
         }
     }
@@ -298,7 +298,7 @@ public sealed class QuickexClient : IQuickexClient
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
         var ua = string.IsNullOrWhiteSpace(opt.UserAgent) ? DefaultBrowserUserAgent : opt.UserAgent;
 
-        Console.WriteLine($"[QUICKEX] GET {fullUrl}");
+        ExchangeLog.Debug($"[QUICKEX] GET {fullUrl}");
 
         try
         {
@@ -315,7 +315,7 @@ public sealed class QuickexClient : IQuickexClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[QUICKEX] Timed out");
+                ExchangeLog.Debug($"[QUICKEX] Timed out");
                 return (null, 0);
             }
 
@@ -325,7 +325,7 @@ public sealed class QuickexClient : IQuickexClient
 
             if (!resp.IsSuccessStatusCode && code != 422)
             {
-                Console.WriteLine($"[QUICKEX] HTTP {code}: {body}");
+                ExchangeLog.Debug($"[QUICKEX] HTTP {code}: {body}");
                 return (null, code);
             }
 
@@ -333,7 +333,7 @@ public sealed class QuickexClient : IQuickexClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[QUICKEX] Error: {ex.Message}");
+            ExchangeLog.Debug($"[QUICKEX] Error: {ex.Message}");
             return (null, 0);
         }
     }

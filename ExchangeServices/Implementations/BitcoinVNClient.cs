@@ -117,7 +117,7 @@ public sealed class BitcoinVNClient : IBitcoinVNClient
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300 || string.IsNullOrWhiteSpace(res.Body))
         {
-            Console.WriteLine($"[BitcoinVN] /api/info failed: status={res?.Status}");
+            ExchangeLog.Debug($"[BitcoinVN] /api/info failed: status={res?.Status}");
             return Array.Empty<ExchangeCurrency>();
         }
 
@@ -160,7 +160,7 @@ public sealed class BitcoinVNClient : IBitcoinVNClient
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300)
         {
-            Console.WriteLine($"[BitcoinVN] pairs/{depositId}/{settleId} failed: status={res?.Status}");
+            ExchangeLog.Debug($"[BitcoinVN] pairs/{depositId}/{settleId} failed: status={res?.Status}");
             return null;
         }
 

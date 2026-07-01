@@ -159,7 +159,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITXCHANGE] limits parse error: {ex.Message}");
+            ExchangeLog.Debug($"[BITXCHANGE] limits parse error: {ex.Message}");
             return Array.Empty<ExchangeCurrency>();
         }
 
@@ -181,7 +181,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[BITXCHANGE] crypto parse error for {ticker}: {ex.Message}");
+                ExchangeLog.Debug($"[BITXCHANGE] crypto parse error for {ticker}: {ex.Message}");
             }
             finally
             {
@@ -289,7 +289,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
 
             if (toAmount <= 0m)
             {
-                Console.WriteLine($"[BITXCHANGE] zero rate for {from}→{to} amount={amount}: {body}");
+                ExchangeLog.Debug($"[BITXCHANGE] zero rate for {from}→{to} amount={amount}: {body}");
                 return (null, minDeposit > 0m ? minDeposit : null);
             }
 
@@ -300,7 +300,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITXCHANGE] parse error: {ex.Message} — {body}");
+            ExchangeLog.Debug($"[BITXCHANGE] parse error: {ex.Message} — {body}");
             return (null, null);
         }
     }
@@ -309,7 +309,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
     private async Task<string?> GetAsync(string fullUrl, CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
-        Console.WriteLine($"[BITXCHANGE] GET {fullUrl}");
+        ExchangeLog.Debug($"[BITXCHANGE] GET {fullUrl}");
 
         try
         {
@@ -322,21 +322,21 @@ public sealed class BitXChangeClient : IBitXChangeClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[BITXCHANGE] Timed out");
+                ExchangeLog.Debug($"[BITXCHANGE] Timed out");
                 return null;
             }
 
             using var resp = await sendTask;
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
 
-            Console.WriteLine($"[BITXCHANGE] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            ExchangeLog.Debug($"[BITXCHANGE] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 
             if (!resp.IsSuccessStatusCode) return null;
             return body;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITXCHANGE] Error: {ex.Message}");
+            ExchangeLog.Debug($"[BITXCHANGE] Error: {ex.Message}");
             return null;
         }
     }

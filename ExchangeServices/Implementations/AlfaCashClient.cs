@@ -61,20 +61,20 @@ public sealed class AlfaCashClient : IAlfaCashClient
 
         if (depositGate is null || withdrawalGate is null)
         {
-            Console.WriteLine($"[ALFACASH SELL] Unsupported pair: {query.Base.Ticker}/{query.Quote.Ticker}");
+            ExchangeLog.Debug($"[ALFACASH SELL] Unsupported pair: {query.Base.Ticker}/{query.Quote.Ticker}");
             return null;
         }
 
-        Console.WriteLine($"[ALFACASH SELL] gate_deposit={depositGate}, gate_withdrawal={withdrawalGate}");
+        ExchangeLog.Debug($"[ALFACASH SELL] gate_deposit={depositGate}, gate_withdrawal={withdrawalGate}");
 
         var dto = await GetRateAsync(depositGate, withdrawalGate, ct);
         if (dto is null || dto.Rate <= 0)
         {
-            Console.WriteLine("[ALFACASH SELL] rate null or zero");
+            ExchangeLog.Debug("[ALFACASH SELL] rate null or zero");
             return null;
         }
 
-        Console.WriteLine($"[ALFACASH SELL] rate={dto.Rate}");
+        ExchangeLog.Debug($"[ALFACASH SELL] rate={dto.Rate}");
 
         return new PriceResult(
             Exchange:      ExchangeKey,
@@ -99,22 +99,22 @@ public sealed class AlfaCashClient : IAlfaCashClient
 
         if (depositGate is null || withdrawalGate is null)
         {
-            Console.WriteLine($"[ALFACASH BUY] Unsupported pair: {query.Quote.Ticker}/{query.Base.Ticker}");
+            ExchangeLog.Debug($"[ALFACASH BUY] Unsupported pair: {query.Quote.Ticker}/{query.Base.Ticker}");
             return null;
         }
 
-        Console.WriteLine($"[ALFACASH BUY] gate_deposit={depositGate}, gate_withdrawal={withdrawalGate}");
+        ExchangeLog.Debug($"[ALFACASH BUY] gate_deposit={depositGate}, gate_withdrawal={withdrawalGate}");
 
         var dto = await GetRateAsync(depositGate, withdrawalGate, ct);
         if (dto is null || dto.Rate <= 0)
         {
-            Console.WriteLine("[ALFACASH BUY] rate null or zero");
+            ExchangeLog.Debug("[ALFACASH BUY] rate null or zero");
             return null;
         }
 
         // rate = XMR per 1 USDT → invert to get USDT per 1 XMR
         var buyPrice = 1m / dto.Rate;
-        Console.WriteLine($"[ALFACASH BUY] rawRate={dto.Rate}, buyPrice={buyPrice:F2}");
+        ExchangeLog.Debug($"[ALFACASH BUY] rawRate={dto.Rate}, buyPrice={buyPrice:F2}");
 
         return new PriceResult(
             Exchange:      ExchangeKey,
@@ -176,7 +176,7 @@ public sealed class AlfaCashClient : IAlfaCashClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[ALFACASH RATE] status={res?.Status} body={res?.Body?[..Math.Min(200, res?.Body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[ALFACASH RATE] status={res?.Status} body={res?.Body?[..Math.Min(200, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 

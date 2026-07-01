@@ -189,7 +189,7 @@ public sealed class ExolixClient : IExolixClient
                 if (!string.Equals(_usdtNet, net, StringComparison.OrdinalIgnoreCase))
                 {
                     _usdtNet = net;
-                    Console.WriteLine($"[EXOLIX] resolved USDT network = {net} for the XMR pair");
+                    ExchangeLog.Debug($"[EXOLIX] resolved USDT network = {net} for the XMR pair");
                 }
                 return rate;
             }

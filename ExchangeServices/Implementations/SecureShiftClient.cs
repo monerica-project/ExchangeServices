@@ -145,7 +145,7 @@ public sealed class SecureShiftClient : ISecureShiftClient
         var body = await SendAsync(qs, ct);
         if (body is null) return null;
 
-        Console.WriteLine($"[SECURESHIFT] estimate raw: {body}");
+        ExchangeLog.Debug($"[SECURESHIFT] estimate raw: {body}");
 
         try
         {
@@ -202,22 +202,22 @@ public sealed class SecureShiftClient : ISecureShiftClient
             if (!resp.IsSuccessStatusCode)
             {
                 var err = await resp.Content.ReadAsStringAsync(CancellationToken.None);
-                Console.WriteLine($"[SECURESHIFT] HTTP {(int)resp.StatusCode}: {err}");
+                ExchangeLog.Debug($"[SECURESHIFT] HTTP {(int)resp.StatusCode}: {err}");
                 return null;
             }
 
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
-            Console.WriteLine($"[SECURESHIFT] {fullUrl} → {body}");
+            ExchangeLog.Debug($"[SECURESHIFT] {fullUrl} → {body}");
             return body;
         }
         catch (TaskCanceledException)
         {
-            Console.WriteLine($"[SECURESHIFT] Timeout: {fullUrl}");
+            ExchangeLog.Debug($"[SECURESHIFT] Timeout: {fullUrl}");
             return null;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SECURESHIFT] Error: {fullUrl} — {ex.Message}");
+            ExchangeLog.Debug($"[SECURESHIFT] Error: {fullUrl} — {ex.Message}");
             return null;
         }
     }

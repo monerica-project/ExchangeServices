@@ -137,7 +137,7 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
                 res.StatusCode >= HttpStatusCode.MultipleChoices)
             {
                 if (res is not null)
-                    Console.WriteLine($"[SAGESWAP] feed {(int)res.StatusCode} from {ratesXmlUrl}");
+                    ExchangeLog.Debug($"[SAGESWAP] feed {(int)res.StatusCode} from {ratesXmlUrl}");
                 return feedItems ?? (IReadOnlyList<RateItem>)Array.Empty<RateItem>();
             }
 

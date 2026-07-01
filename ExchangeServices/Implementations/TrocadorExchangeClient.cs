@@ -173,7 +173,7 @@ public sealed class TrocadorClient : ITrocadorClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[TROCADOR MIN] Error fetching minimum for {ticker}/{network}: {ex.Message}");
+            ExchangeLog.Debug($"[TROCADOR MIN] Error fetching minimum for {ticker}/{network}: {ex.Message}");
             return null;
         }
     }
@@ -202,7 +202,7 @@ public sealed class TrocadorClient : ITrocadorClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[TROCADOR RATE] status={res?.Status} body={res?.Body?[..Math.Min(200, res?.Body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[TROCADOR RATE] status={res?.Status} body={res?.Body?[..Math.Min(200, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 

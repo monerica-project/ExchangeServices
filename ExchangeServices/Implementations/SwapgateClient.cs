@@ -237,7 +237,7 @@ public sealed class SwapgateClient : ISwapgateClient
                     var v = ReadDecimal(expEl);
                     if (v > 0m) min = v;
                 }
-                Console.WriteLine($"[SWAPGATE] 422 min={min} for {fromCurrency}→{toCurrency}");
+                ExchangeLog.Debug($"[SWAPGATE] 422 min={min} for {fromCurrency}→{toCurrency}");
                 return (null, min);
             }
 
@@ -268,7 +268,7 @@ public sealed class SwapgateClient : ISwapgateClient
         var fullUrl = $"{baseUrl}/{relativeUrl.TrimStart('/')}";
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
 
-        Console.WriteLine($"[SWAPGATE] GET {fullUrl}");
+        ExchangeLog.Debug($"[SWAPGATE] GET {fullUrl}");
 
         try
         {
@@ -282,7 +282,7 @@ public sealed class SwapgateClient : ISwapgateClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[SWAPGATE] Timed out: {fullUrl}");
+                ExchangeLog.Debug($"[SWAPGATE] Timed out: {fullUrl}");
                 return (null, 0);
             }
 
@@ -292,7 +292,7 @@ public sealed class SwapgateClient : ISwapgateClient
 
             if (!resp.IsSuccessStatusCode && code != 422)
             {
-                Console.WriteLine($"[SWAPGATE] HTTP {code}: {body}");
+                ExchangeLog.Debug($"[SWAPGATE] HTTP {code}: {body}");
                 return (null, code);
             }
 
@@ -300,7 +300,7 @@ public sealed class SwapgateClient : ISwapgateClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SWAPGATE] Error: {fullUrl} — {ex.Message}");
+            ExchangeLog.Debug($"[SWAPGATE] Error: {fullUrl} — {ex.Message}");
             return (null, 0);
         }
     }

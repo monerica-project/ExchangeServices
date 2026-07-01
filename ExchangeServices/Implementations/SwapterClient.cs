@@ -166,13 +166,13 @@ public sealed class SwapterClient : ISwapterClient
                 if (v > 0m) return (v, null);
             }
 
-            Console.WriteLine($"[SWAPTER] estimate below min or bad response: {body}");
+            ExchangeLog.Debug($"[SWAPTER] estimate below min or bad response: {body}");
             var min = await GetMinAmountAsync(depositCoin, depositNetwork, withdrawCoin, withdrawNetwork, ct);
             return (null, min);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SWAPTER] parse error: {ex.Message} — {body}");
+            ExchangeLog.Debug($"[SWAPTER] parse error: {ex.Message} — {body}");
             return (null, null);
         }
     }
@@ -211,7 +211,7 @@ public sealed class SwapterClient : ISwapterClient
         var fullUrl = $"{opt.BaseUrl.TrimEnd('/')}/{relativeUrl.TrimStart('/')}";
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
 
-        Console.WriteLine($"[SWAPTER] POST {fullUrl}");
+        ExchangeLog.Debug($"[SWAPTER] POST {fullUrl}");
 
         try
         {
@@ -224,21 +224,21 @@ public sealed class SwapterClient : ISwapterClient
 
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine($"[SWAPTER] Timed out: {fullUrl}");
+                ExchangeLog.Debug($"[SWAPTER] Timed out: {fullUrl}");
                 return null;
             }
 
             using var resp = await sendTask;
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
 
-            Console.WriteLine($"[SWAPTER] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            ExchangeLog.Debug($"[SWAPTER] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 
             if (!resp.IsSuccessStatusCode) return null;
             return body;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SWAPTER] Error: {fullUrl} — {ex.Message}");
+            ExchangeLog.Debug($"[SWAPTER] Error: {fullUrl} — {ex.Message}");
             return null;
         }
     }

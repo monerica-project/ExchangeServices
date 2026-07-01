@@ -106,7 +106,7 @@ public sealed class CCECashClient : ICCECashClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[CCE CURRENCIES] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[CCE CURRENCIES] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300)
             return Array.Empty<ExchangeCurrency>();
@@ -157,14 +157,14 @@ public sealed class CCECashClient : ICCECashClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[CCE RECENT] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
+        ExchangeLog.Debug($"[CCE RECENT] Status={res?.Status}, Body={res?.Body?[..Math.Min(300, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300)
             return 0m;
 
         var dto = JsonSerializer.Deserialize<RecentPricesResponse>(res.Body, JsonOpt);
 
-        Console.WriteLine($"[CCE RECENT] Code={dto?.Code}, Msg={dto?.Msg}, Count={dto?.Data?.Count}");
+        ExchangeLog.Debug($"[CCE RECENT] Code={dto?.Code}, Msg={dto?.Msg}, Count={dto?.Data?.Count}");
 
         if (dto is null || dto.Code != 0 || dto.Data is null)
             return 0m;
@@ -181,7 +181,7 @@ public sealed class CCECashClient : ICCECashClient
         var (fromAbbr, fromChain) = await ResolveAbbrChainAsync(query.Base, ct) ?? default;
         var (toAbbr, toChain) = await ResolveAbbrChainAsync(query.Quote, ct) ?? default;
 
-        Console.WriteLine($"[CCE SELL CALC] fromAbbr={fromAbbr}, fromChain={fromChain}, toAbbr={toAbbr}, toChain={toChain}");
+        ExchangeLog.Debug($"[CCE SELL CALC] fromAbbr={fromAbbr}, fromChain={fromChain}, toAbbr={toAbbr}, toChain={toChain}");
 
         if (string.IsNullOrWhiteSpace(fromAbbr) || string.IsNullOrWhiteSpace(toAbbr)) return null;
 
@@ -198,14 +198,14 @@ public sealed class CCECashClient : ICCECashClient
         var (usdtAbbr, usdtChain) = await ResolveAbbrChainAsync(query.Quote, ct) ?? default;
         var (xmrAbbr, xmrChain) = await ResolveAbbrChainAsync(query.Base, ct) ?? default;
 
-        Console.WriteLine($"[CCE BUY CALC] usdtAbbr={usdtAbbr}, usdtChain={usdtChain}, xmrAbbr={xmrAbbr}, xmrChain={xmrChain}");
+        ExchangeLog.Debug($"[CCE BUY CALC] usdtAbbr={usdtAbbr}, usdtChain={usdtChain}, xmrAbbr={xmrAbbr}, xmrChain={xmrChain}");
 
         if (string.IsNullOrWhiteSpace(usdtAbbr) || string.IsNullOrWhiteSpace(xmrAbbr)) return null;
 
         var data = await CalculateAsync(usdtAbbr, usdtChain, 200m, xmrAbbr, xmrChain, ct);
         var xmrOut = data?.To?.FirstOrDefault()?.ToQuantity ?? 0m;
 
-        Console.WriteLine($"[CCE BUY CALC] xmrOut={xmrOut}");
+        ExchangeLog.Debug($"[CCE BUY CALC] xmrOut={xmrOut}");
 
         if (xmrOut <= 0) return null;
 
@@ -232,7 +232,7 @@ public sealed class CCECashClient : ICCECashClient
         };
 
         var json = JsonSerializer.Serialize(reqObj, JsonOpt);
-        Console.WriteLine($"[CCE CALC] Request: {json}");
+        ExchangeLog.Debug($"[CCE CALC] Request: {json}");
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/order/calculate");
         req.Headers.TryAddWithoutValidation("Accept", "application/json");
@@ -241,13 +241,13 @@ public sealed class CCECashClient : ICCECashClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[CCE CALC] Status={res?.Status}, Body={res?.Body}");
+        ExchangeLog.Debug($"[CCE CALC] Status={res?.Status}, Body={res?.Body}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 
         var dto = JsonSerializer.Deserialize<CalcResponse>(res.Body, JsonOpt);
 
-        Console.WriteLine($"[CCE CALC] Code={dto?.Code}, Msg={dto?.Msg}");
+        ExchangeLog.Debug($"[CCE CALC] Code={dto?.Code}, Msg={dto?.Msg}");
 
         if (dto is null || dto.Code != 0 || dto.Data is null) return null;
 
@@ -371,7 +371,7 @@ public sealed class CCECashClient : ICCECashClient
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey) || string.IsNullOrWhiteSpace(opt.ApiSecret))
         {
-            Console.WriteLine("[CCE SIG] WARNING: ApiKey or ApiSecret is empty — requests will be unauthenticated");
+            ExchangeLog.Debug("[CCE SIG] WARNING: ApiKey or ApiSecret is empty — requests will be unauthenticated");
             return;
         }
 
@@ -388,7 +388,7 @@ public sealed class CCECashClient : ICCECashClient
         req.Headers.TryAddWithoutValidation("X-Api-Timestamp", ts);
         req.Headers.TryAddWithoutValidation("X-Api-Signature", sign);
 
-        Console.WriteLine($"[CCE SIG] key={opt.ApiKey[..Math.Min(6, opt.ApiKey.Length)]}***, ts={ts}, sign={sign[..8]}***");
+        ExchangeLog.Debug($"[CCE SIG] key={opt.ApiKey[..Math.Min(6, opt.ApiKey.Length)]}***, ts={ts}, sign={sign[..8]}***");
     }
 
     private TimeSpan Timeout() =>

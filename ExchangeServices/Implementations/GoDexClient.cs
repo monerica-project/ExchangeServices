@@ -161,7 +161,7 @@ public sealed class GoDexClient : IGoDexClient
 
         var res = await SafeHttpExtensions.SendForStringAsync(_http, req, Timeout(), ct);
 
-        Console.WriteLine($"[GoDex] {fromCode}({fromNetwork})→{toCode}({toNetwork}) amt={amount} " +
+        ExchangeLog.Debug($"[GoDex] {fromCode}({fromNetwork})→{toCode}({toNetwork}) amt={amount} " +
                           $"status={res?.Status} body={res?.Body?[..Math.Min(200, res?.Body?.Length ?? 0)]}");
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;

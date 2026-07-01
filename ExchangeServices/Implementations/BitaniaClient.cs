@@ -143,7 +143,7 @@ public sealed class BitaniaClient : IBitaniaClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITANIA] currencies parse error: {ex.Message}");
+            ExchangeLog.Debug($"[BITANIA] currencies parse error: {ex.Message}");
             return Array.Empty<ExchangeCurrency>();
         }
     }
@@ -175,7 +175,7 @@ public sealed class BitaniaClient : IBitaniaClient
                 codeEl.ValueKind == JsonValueKind.Number && codeEl.GetInt32() != 0)
             {
                 var msg = root.TryGetProperty("msg", out var m) ? m.GetString() : null;
-                Console.WriteLine($"[BITANIA] {from}->{to} error: {msg}");
+                ExchangeLog.Debug($"[BITANIA] {from}->{to} error: {msg}");
                 return (null, null);
             }
 
@@ -194,7 +194,7 @@ public sealed class BitaniaClient : IBitaniaClient
             if (data.TryGetProperty("errors", out var errEl) && errEl.ValueKind == JsonValueKind.Array &&
                 errEl.GetArrayLength() > 0)
             {
-                Console.WriteLine($"[BITANIA] {from}->{to} warn: {errEl}");
+                ExchangeLog.Debug($"[BITANIA] {from}->{to} warn: {errEl}");
                 if (min is > 0m && amount < min) return (null, min);
             }
 
@@ -205,12 +205,12 @@ public sealed class BitaniaClient : IBitaniaClient
                 if (recv > 0m) return (recv, min);
             }
 
-            Console.WriteLine($"[BITANIA] no to.amount in: {Trunc(body)}");
+            ExchangeLog.Debug($"[BITANIA] no to.amount in: {Trunc(body)}");
             return (null, min);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITANIA] parse error: {ex.Message} — {Trunc(body)}");
+            ExchangeLog.Debug($"[BITANIA] parse error: {ex.Message} — {Trunc(body)}");
             return (null, null);
         }
     }
@@ -244,7 +244,7 @@ public sealed class BitaniaClient : IBitaniaClient
             var timeoutTask = Task.Delay(timeout, ct);
             if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
             {
-                Console.WriteLine("[BITANIA] Timed out");
+                ExchangeLog.Debug("[BITANIA] Timed out");
                 return null;
             }
 
@@ -252,14 +252,14 @@ public sealed class BitaniaClient : IBitaniaClient
             var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
             if (!resp.IsSuccessStatusCode)
             {
-                Console.WriteLine($"[BITANIA] HTTP {(int)resp.StatusCode}: {Trunc(body)}");
+                ExchangeLog.Debug($"[BITANIA] HTTP {(int)resp.StatusCode}: {Trunc(body)}");
                 return null;
             }
             return body;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BITANIA] Error: {ex.Message}");
+            ExchangeLog.Debug($"[BITANIA] Error: {ex.Message}");
             return null;
         }
     }
@@ -271,7 +271,7 @@ public sealed class BitaniaClient : IBitaniaClient
             return true;
         if (!_warnedNoKey)
         {
-            Console.WriteLine("[BITANIA] missing ApiKey/ApiSecret — set Bitania:ApiKey and Bitania:ApiSecret in appsettings.json");
+            ExchangeLog.Debug("[BITANIA] missing ApiKey/ApiSecret — set Bitania:ApiKey and Bitania:ApiSecret in appsettings.json");
             _warnedNoKey = true;
         }
         return false;
