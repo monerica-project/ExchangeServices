@@ -43,3 +43,4 @@ artifacts/
 *.DotSettings.user
 .DS_Store
 Thumbs.db
+ExchangeServices.Console/appsettings.json
