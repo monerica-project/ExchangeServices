@@ -56,8 +56,6 @@ public static class ServiceCollectionExtensions
         services.AddChangeHero(config);
         services.AddBitania(config);
 
-        //        services.AddDevilExchange(config);
-
         //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
         services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
@@ -813,31 +811,6 @@ public static class ServiceCollectionExtensions
         // Expose generics for your hub (IEnumerable<>)
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<INanswapClient>());
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<INanswapClient>());
-
-        return services;
-    }
-
-    public static IServiceCollection AddDevilExchange(this IServiceCollection services, IConfiguration config)
-    {
-        services.Configure<DevilExchangeOptions>(config.GetSection("DevilExchange"));
-
-        services.AddHttpClient<IDevilExchangeClient, DevilExchangeClient>()
-            .ConfigureHttpClient((sp, client) =>
-            {
-                var opt = sp.GetRequiredService<IOptions<DevilExchangeOptions>>().Value;
-                client.BaseAddress = new Uri(opt.BaseUrl); // https://devil.exchange
-                client.Timeout = TimeSpan.FromSeconds(Math.Clamp(opt.TimeoutSeconds, 3, 60));
-
-                if (client.DefaultRequestHeaders.UserAgent.Count == 0 &&
-                    !string.IsNullOrWhiteSpace(opt.UserAgent))
-                {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
-                }
-            });
-
-        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IDevilExchangeClient>());
-        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IDevilExchangeClient>());
-        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IDevilExchangeClient>());
 
         return services;
     }
