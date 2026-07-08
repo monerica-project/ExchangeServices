@@ -58,7 +58,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
     // =========================
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var data = await ResolveAndQuoteAsync(query.Base, query.Quote, amountFrom: 1m, ct);
+        var data = await ResolveAndQuoteAsync(query.Base, query.Quote, amountFrom: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, ct);
         if (data is null) return null;
 
         var from = data.AmountFrom;

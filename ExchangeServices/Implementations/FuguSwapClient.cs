@@ -53,7 +53,7 @@ public sealed class FuguSwapClient : IFuguSwapClient
         {
             var dto = await GetPriceDtoAsync(
                 type: "float",
-                amount: 1m,
+                amount: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m),
                 from: fromCoin,
                 to: toCoin,
                 fromNetwork: NormalizeOptionalNetwork(fromNet),
@@ -67,7 +67,7 @@ public sealed class FuguSwapClient : IFuguSwapClient
                 Exchange: ExchangeKey,
                 Base: query.Base,
                 Quote: query.Quote,
-                Price: dto.AmountTo, // USDT per 1 XMR
+                Price: dto.AmountTo / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m), // per-unit
                 TimestampUtc: DateTimeOffset.UtcNow,
                 CorrelationId: null,
                 Raw: null

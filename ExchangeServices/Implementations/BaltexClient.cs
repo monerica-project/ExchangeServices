@@ -77,7 +77,7 @@ public sealed class BaltexClient : IBaltexClient
             string.IsNullOrWhiteSpace(toCurrency) || string.IsNullOrWhiteSpace(toNetwork))
             return null;
 
-        var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amount: 1m, ct);
+        var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amount: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m), ct);
 
         if (dto?.ToAmount is null || dto.ToAmount <= 0) return null;
 
@@ -87,7 +87,7 @@ public sealed class BaltexClient : IBaltexClient
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: dto.ToAmount.Value,
+            Price: dto.ToAmount.Value / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m),
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null,

@@ -107,7 +107,7 @@ public sealed class ZeroTraceClient : IZeroTraceClient
             fromCcy: fromCcy,
             toCcy: toCcy,
             direction: "from",
-            amount: 1m,
+            amount: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m),
             ct: ct);
 
         if (dto?.Data?.To is null) return null;
@@ -125,7 +125,7 @@ public sealed class ZeroTraceClient : IZeroTraceClient
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: dto.Data.To.Amount, // USDT per 1 XMR
+            Price: dto.Data.To.Amount / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m), // per-unit
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null

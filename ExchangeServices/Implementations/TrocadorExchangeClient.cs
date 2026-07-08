@@ -37,6 +37,13 @@ public sealed class TrocadorClient : ITrocadorClient
         NumberHandling = JsonNumberHandling.AllowReadingFromString
     };
 
+    // Cached copy of Trocador's /coins list (ticker + network), shared across the transient
+    // client instances, so coins outside the fast-path map (KAS, TON, SUI, …) can be resolved
+    // to their REAL network without hitting the API on every quote.
+    private static IReadOnlyList<ExchangeCurrency>? _coinsCache;
+    private static DateTime _coinsCacheAtUtc;
+    private static readonly SemaphoreSlim _coinsLock = new(1, 1);
+
     private readonly HttpClient _http;
     private readonly TrocadorOptions opt;
 
@@ -55,12 +62,17 @@ public sealed class TrocadorClient : ITrocadorClient
 
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var (tickerFrom, networkFrom) = ToTicker(query.Base);
-        var (tickerTo, networkTo) = ToTicker(query.Quote);
+        var (tickerFrom, networkFrom) = await ResolveAsync(query.Base, ct);
+        var (tickerTo, networkTo) = await ResolveAsync(query.Quote, ct);
 
         if (tickerFrom is null || tickerTo is null) return null;
 
-        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, amountFrom: 1m, ct, isFixed: query.Fixed);
+        // Quote the user's ACTUAL amount, not a hardcoded 1 unit — for cheap coins (KAS, DOGE,
+        // XLM, …) 1 unit is below the exchange minimum and Trocador returns nothing. Price is
+        // then normalized back to per-unit so the caller's `amount × Price` stays correct.
+        var probeAmt = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+
+        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, amountFrom: probeAmt, ct, isFixed: query.Fixed);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
 
         await Task.WhenAll(rateTask, minTask);
@@ -74,7 +86,7 @@ public sealed class TrocadorClient : ITrocadorClient
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: dto.AmountTo,
+            Price: dto.AmountTo / probeAmt,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: $"sell ticker_from={tickerFrom} ticker_to={tickerTo} amount_to={dto.AmountTo} provider={dto.Provider}",
@@ -84,8 +96,8 @@ public sealed class TrocadorClient : ITrocadorClient
 
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var (tickerFrom, networkFrom) = ToTicker(query.Quote);
-        var (tickerTo, networkTo) = ToTicker(query.Base);
+        var (tickerFrom, networkFrom) = await ResolveAsync(query.Quote, ct);
+        var (tickerTo, networkTo) = await ResolveAsync(query.Base, ct);
 
         if (tickerFrom is null || tickerTo is null) return null;
 
@@ -213,6 +225,67 @@ public sealed class TrocadorClient : ITrocadorClient
     // HELPERS
     // =========================
 
+    /// <summary>Resolves an asset to Trocador's (ticker, network). Fast path: the hardcoded map
+    /// for common coins. Otherwise looks the coin up in Trocador's live /coins list to get its
+    /// REAL network — so pairs like KAS / TON / SUI resolve, exactly like on trocador.app.</summary>
+    private async Task<(string? Ticker, string Network)> ResolveAsync(AssetRef asset, CancellationToken ct)
+    {
+        var mapped = ToTicker(asset);
+        if (mapped.Ticker is not null)
+        {
+            return mapped;
+        }
+
+        var ticker = (asset.Ticker ?? "").Trim().ToLowerInvariant();
+        if (ticker.Length == 0)
+        {
+            return (null, string.Empty);
+        }
+
+        var wantNet = (asset.Network ?? "").Trim();
+        var coins = await GetCoinsCachedAsync(ct);
+
+        // Exact ticker+network when the caller gave a network; else the first coin with that
+        // ticker (Trocador lists most coins once, on their native chain).
+        var match = coins.FirstOrDefault(c =>
+                        string.Equals(c.Ticker, ticker, StringComparison.OrdinalIgnoreCase) &&
+                        (wantNet.Length == 0 || string.Equals(c.Network, wantNet, StringComparison.OrdinalIgnoreCase)))
+                    ?? coins.FirstOrDefault(c =>
+                        string.Equals(c.Ticker, ticker, StringComparison.OrdinalIgnoreCase));
+
+        return match is null ? (null, string.Empty) : (ticker, match.Network ?? string.Empty);
+    }
+
+    private async Task<IReadOnlyList<ExchangeCurrency>> GetCoinsCachedAsync(CancellationToken ct)
+    {
+        if (_coinsCache is not null && DateTime.UtcNow - _coinsCacheAtUtc < TimeSpan.FromMinutes(30))
+        {
+            return _coinsCache;
+        }
+
+        await _coinsLock.WaitAsync(ct);
+        try
+        {
+            if (_coinsCache is not null && DateTime.UtcNow - _coinsCacheAtUtc < TimeSpan.FromMinutes(30))
+            {
+                return _coinsCache;
+            }
+
+            var coins = await GetCurrenciesAsync(ct);
+            if (coins.Count > 0)
+            {
+                _coinsCache = coins;
+                _coinsCacheAtUtc = DateTime.UtcNow;
+            }
+
+            return coins;
+        }
+        finally
+        {
+            _coinsLock.Release();
+        }
+    }
+
     /// <summary>Maps an AssetRef to Trocador's (ticker, network) pair.</summary>
     private (string? Ticker, string Network) ToTicker(AssetRef asset)
     {
@@ -248,6 +321,9 @@ public sealed class TrocadorClient : ITrocadorClient
             "ATOM" => ("atom", "Mainnet"),
             "DASH" => ("dash", "Mainnet"),
             "ZEC" => ("zec", "Mainnet"),
+
+            // Not in the fast-path map (KAS, TON, RVN, SUI, …): return null here so the caller
+            // resolves the REAL ticker+network from Trocador's live /coins list instead.
             _ => ((string?)null, string.Empty),
         };
 

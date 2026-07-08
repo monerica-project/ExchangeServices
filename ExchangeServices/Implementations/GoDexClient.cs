@@ -61,7 +61,7 @@ public sealed class GoDexClient : IGoDexClient
         var (fromCode, fromNetwork) = Resolve(query.Base);   // sending the base
         var (toCode,   toNetwork)   = Resolve(query.Quote);  // receiving the quote
 
-        var dto      = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: 1m, ct);
+        var dto      = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m), ct);
         var received = dto?.Amount ?? 0m;
         // GoDex signals unavailable pairs with amount:"0"/rate:"0" → treat as no price.
         if (received <= 0m) return null;
@@ -70,7 +70,7 @@ public sealed class GoDexClient : IGoDexClient
             Exchange:      ExchangeKey,
             Base:          query.Base,
             Quote:         query.Quote,
-            Price:         received,            // already post-fee: quote received for 1 base
+            Price:         received / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m), // per-unit (post-fee)
             TimestampUtc:  DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw:           $"sell 1 {fromCode}→{toCode} received={received} rate={dto?.Rate}");

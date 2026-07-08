@@ -45,14 +45,14 @@ public sealed class NanswapClient : INanswapClient
         foreach (var fromKey in fromKeys)
             foreach (var toKey in toKeys)
             {
-                var dto = await GetEstimateAsync(fromKey, toKey, amount: 1m, ct);
+                var dto = await GetEstimateAsync(fromKey, toKey, amount: query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m, ct);
                 if (dto is null || dto.AmountTo <= 0) continue;
 
                 return new PriceResult(
                     Exchange: ExchangeKey,
                     Base: query.Base,
                     Quote: query.Quote,
-                    Price: dto.AmountTo,                 // USDT per 1 XMR
+                    Price: dto.AmountTo / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m), // per-unit
                     TimestampUtc: DateTimeOffset.UtcNow,
                     CorrelationId: null,
                     Raw: null

@@ -115,7 +115,9 @@ public sealed class ChangeNowClient : IChangeNowClient
 
         var flows = query.Fixed ? BuildFixedFlowOnly() : BuildFlowAttempts(opt.Flow);
 
-        const decimal fromAmountUsed = 1m;
+        // Quote the user's actual amount (not a fixed 1 unit) so cheap coins clear the exchange
+        // minimum. Price is divided by fromAmountUsed below, so the per-unit rate stays correct.
+        var fromAmountUsed = query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m;
 
         foreach (var flow in flows)
         {

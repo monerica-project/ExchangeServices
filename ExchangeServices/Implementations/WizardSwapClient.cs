@@ -120,14 +120,14 @@ public sealed class WizardSwapClient : IWizardSwapClient
         var to = ResolveSymbol(query.Quote);
         if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) return null;
 
-        var amountTo = await EstimateAsync(from, to, amountFrom: 1m, ct);
+        var amountTo = await EstimateAsync(from, to, amountFrom: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m), ct);
         if (amountTo is null || amountTo <= 0m) return null;
 
         return new PriceResult(
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: amountTo.Value, // quote per 1 base
+            Price: amountTo.Value / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m), // per-unit
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null

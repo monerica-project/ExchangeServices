@@ -43,6 +43,8 @@ public sealed class StealthExClient : IStealthExClient
         var toNetworkPrimary = ToStealthExNetwork(query.Quote.Ticker, query.Quote.Network);
         var toNetworksToTry = BuildTronNetworkList(query.Quote.Network, toNetworkPrimary);
 
+        var probeAmt = query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m;
+
         foreach (var toNetwork in toNetworksToTry)
         {
             var result = await PostEstimatedAmountAsync(
@@ -50,12 +52,12 @@ public sealed class StealthExClient : IStealthExClient
                 toSymbol, toNetwork,
                 estimation: "direct",
                 rate: query.Fixed ? "fixed" : "floating",
-                amount: 1m,
+                amount: probeAmt,
                 ct);
 
             if (result is null) continue;
 
-            var sellPrice = result.Value.EstimatedAmount;
+            var sellPrice = result.Value.EstimatedAmount / probeAmt;
 
             return new PriceResult(
                 Exchange: ExchangeKey,

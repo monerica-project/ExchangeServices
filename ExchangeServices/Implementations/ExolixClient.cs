@@ -135,7 +135,7 @@ public sealed class ExolixClient : IExolixClient
     // SELL: send 1 XMR → read toAmount (USDT received) directly.
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: false, amount: 1m, fixedRate: query.Fixed, ct);
+        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: false, amount: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, fixedRate: query.Fixed, ct);
         if (rate is null || rate.FromAmount <= 0 || rate.ToAmount <= 0) return null;
 
         var px = rate.ToAmount / rate.FromAmount;
