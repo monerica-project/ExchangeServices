@@ -41,7 +41,7 @@ public static class ServiceCollectionExtensions
         services.AddBitcoinVN(config);
         services.AddXgram(config);
         services.AddSwapgate(config);
-        services.AddOctoSwap(config);
+        //services.AddOctoSwap(config); // removed: OctoSwap accused of being a scam
         services.AddStereoSwap(config);
         services.AddBitXChange(config);
         services.AddCypherGoat(config);

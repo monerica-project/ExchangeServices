@@ -50,10 +50,25 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
 
     private sealed record RateItem(string From, string To, decimal In, decimal Out);
 
+    // SageSwap quotes every currency in a uniform 9-decimal base unit ("gwei" in
+    // their docs), so a fixed-rate response's out/in ratio IS the human rate — the
+    // 1e9 scaling cancels and no per-coin decimals are needed.
+    private const decimal GweiScale = 1_000_000_000m;
+
     // SELL: 1 XMR -> USDT.  Feed row from=XMR, to=USDT* ; price = out/in (USDT per XMR).
     // SELL: base -> quote. Feed row from=base, to=quote ; price = out/in (quote per base).
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
+        // FIXED-rate quote (locked amount) comes from the authenticated JSON /v1/rate
+        // API, keyed by friendlyId (resolved into ExchangeId by the caller).
+        if (query.Fixed)
+        {
+            var a = await GetFixedAmountsAsync(query.Base.ExchangeId, query.Quote.ExchangeId, (long)GweiScale, ct);
+            if (a is null || a.Value.In <= 0 || a.Value.Out <= 0) return null;
+            var fp = a.Value.Out / a.Value.In; // quote received per 1 base (gwei cancels)
+            return fp <= 0 ? null : new PriceResult(ExchangeKey, query.Base, query.Quote, fp, DateTimeOffset.UtcNow);
+        }
+
         var items = await GetFeedAsync(ct);
         var baseT = (query.Base.Ticker ?? "XMR").Trim().ToUpperInvariant();
         var quoteT = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
@@ -69,6 +84,20 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
     // BUY: quote -> base. Feed row from=quote, to=base ; price = in/out (quote per base).
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
+        // FIXED-rate quote: send a probe amount of the quote currency and measure the
+        // base received. price = quote paid / base received = in/out (gwei cancels).
+        if (query.Fixed)
+        {
+            // Stablecoin quotes arrive with no ProbeAmount; 1 unit is under SageSwap's
+            // minimum (422), so default to a realistic ~$200 buy that clears it.
+            var probe = query.ProbeAmount ?? 200m;
+            var inGwei = (long)Math.Round(probe * GweiScale, MidpointRounding.AwayFromZero);
+            var a = await GetFixedAmountsAsync(query.Quote.ExchangeId, query.Base.ExchangeId, inGwei, ct);
+            if (a is null || a.Value.In <= 0 || a.Value.Out <= 0) return null;
+            var fp = a.Value.In / a.Value.Out; // quote paid per 1 base received
+            return fp <= 0 ? null : new PriceResult(ExchangeKey, query.Base, query.Quote, fp, DateTimeOffset.UtcNow);
+        }
+
         var items = await GetFeedAsync(ct);
         var baseT = (query.Base.Ticker ?? "XMR").Trim().ToUpperInvariant();
         var quoteT = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
@@ -79,6 +108,48 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
         if (price <= 0) return null;
 
         return new PriceResult(ExchangeKey, query.Base, query.Quote, price, DateTimeOffset.UtcNow);
+    }
+
+    // =========================
+    // FIXED-RATE QUOTE (authenticated JSON API: GET /v1/rate?rate_type=FIXED).
+    // Amounts are in SageSwap's uniform 9-decimal base units. Returns the raw
+    // (input, output) amounts; callers derive the human rate from their ratio.
+    // =========================
+    private async Task<(decimal In, decimal Out)?> GetFixedAmountsAsync(
+        string? inputFriendlyId, string? outputFriendlyId, long inputGwei, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(inputFriendlyId) ||
+            string.IsNullOrWhiteSpace(outputFriendlyId) ||
+            inputGwei <= 0)
+        {
+            return null;
+        }
+
+        var qs = $"rate_type=FIXED&input_currency={Uri.EscapeDataString(inputFriendlyId)}" +
+                 $"&output_currency={Uri.EscapeDataString(outputFriendlyId)}" +
+                 $"&input_currency_amount={inputGwei.ToString(CultureInfo.InvariantCulture)}";
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "api/v1/rate?" + qs);
+        AddHeaders(req);
+
+        var res = await http.SendForStringWithTimeoutAsync(req, DefaultTimeout, ct);
+        if (res is null ||
+            res.StatusCode < HttpStatusCode.OK ||
+            res.StatusCode >= HttpStatusCode.MultipleChoices)
+        {
+            if (res is not null)
+                ExchangeLog.Debug($"[SAGESWAP] fixed rate {(int)res.StatusCode} {inputFriendlyId}->{outputFriendlyId}");
+            return null;
+        }
+
+        RateResponse? dto;
+        try { dto = JsonSerializer.Deserialize<RateResponse>(res.Body, JsonOpt); }
+        catch { return null; }
+
+        if (dto?.Data is null || dto.Data.InputCurrencyAmount <= 0 || dto.Data.OutputCurrencyAmount <= 0)
+            return null;
+
+        return (dto.Data.InputCurrencyAmount, dto.Data.OutputCurrencyAmount);
     }
 
     // Pick the base<->quote row. For USDT the feed uses chain-suffixed variants
@@ -215,6 +286,18 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
 
         req.Headers.Accept.Clear();
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+    }
+
+    // ── DTOs (fixed-rate quote) ───────────────────────────────────────────
+    private sealed class RateResponse
+    {
+        public RateDto? Data { get; set; }
+    }
+
+    private sealed class RateDto
+    {
+        public decimal InputCurrencyAmount { get; set; }
+        public decimal OutputCurrencyAmount { get; set; }
     }
 
     // ── DTOs (currencies) ─────────────────────────────────────────────────
