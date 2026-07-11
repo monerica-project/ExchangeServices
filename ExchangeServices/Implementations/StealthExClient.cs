@@ -93,7 +93,7 @@ public sealed class StealthExClient : IStealthExClient
                 fromSymbol, fromNetwork,
                 toSymbol, toNetwork,
                 estimation: "direct",
-                rate: "floating",
+                rate: query.Fixed ? "fixed" : "floating",
                 amount: BuyProbeUsdt,
                 ct);
 

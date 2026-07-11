@@ -139,7 +139,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
             networkFrom: networkFrom,
             networkTo: networkTo,
             lastSource: "deposit",
-            fixedRate: false,
+            fixedRate: query.Fixed,
             ct: ct
         );
 

@@ -92,7 +92,7 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
 
         foreach (var want in targets)
         {
-            var info = await PostInfoAsync(isRevert: true, fromCoin, toCoin, fromNet, toNet, want, false, ct);
+            var info = await PostInfoAsync(isRevert: true, fromCoin, toCoin, fromNet, toNet, want, query.Fixed, ct);
             if (info is null || info.Amount <= 0) continue;
 
             var usdtNeeded = info.Amount;          // amount to send

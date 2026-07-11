@@ -105,7 +105,7 @@ public sealed class TrocadorClient : ITrocadorClient
         // 0.01 BTC, 0.3 ETH; default USDT). Fall back to the USDT reference amount.
         var probe = query.ProbeAmount ?? opt.BuyReferenceAmountUsdt;
 
-        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, probe, ct);
+        var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, probe, ct, isFixed: query.Fixed);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
 
         await Task.WhenAll(rateTask, minTask);

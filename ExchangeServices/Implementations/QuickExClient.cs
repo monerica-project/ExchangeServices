@@ -188,7 +188,7 @@ public sealed class QuickexClient : IQuickexClient
         var (amt, min) = await FetchRateAsync(
             quoteI.Value.Currency, quoteI.Value.Network,
             baseI.Value.Currency, baseI.Value.Network,
-            probe, quoteI.Value.Currency, ct);
+            probe, quoteI.Value.Currency, ct, isFixed: query.Fixed);
 
         if (amt is null && min is > 0m)
         {
@@ -196,7 +196,7 @@ public sealed class QuickexClient : IQuickexClient
             (amt, _) = await FetchRateAsync(
                 quoteI.Value.Currency, quoteI.Value.Network,
                 baseI.Value.Currency, baseI.Value.Network,
-                probe, quoteI.Value.Currency, ct);
+                probe, quoteI.Value.Currency, ct, isFixed: query.Fixed);
         }
 
         if (amt is null || amt <= 0m) return null;

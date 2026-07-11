@@ -69,7 +69,7 @@ public sealed class ChangeeClient : IChangeeClient
         var to = ResolveSymbol(query.Base);  // XMR
 
         var probeUsdt = query.ProbeAmount ?? 200m;
-        var dto = await GetRateAsync(from, to, probeUsdt, false, ct);
+        var dto = await GetRateAsync(from, to, probeUsdt, query.Fixed, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
         // rate = XMR received for probeUsdt USDT → invert to get USDT per XMR

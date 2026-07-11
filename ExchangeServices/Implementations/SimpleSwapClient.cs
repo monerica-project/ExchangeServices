@@ -101,7 +101,7 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
         // Correct: (probe / xmrReceived) * (1 - fee) = true per-XMR cost
         // e.g. 400 USDT → 1.0686 XMR via API → 400/1.0686 * 0.996 = $372.8/XMR
         const decimal fixedProbe = 400m;
-        var xmrReceived = await FetchEstimateAsync(to, from, amount: fixedProbe, ct);
+        var xmrReceived = await FetchEstimateAsync(to, from, amount: fixedProbe, ct, query.Fixed);
         if (xmrReceived is null || xmrReceived <= 0) return null;
 
         var buyPrice = (fixedProbe / xmrReceived.Value) * ApiRateCorrection;

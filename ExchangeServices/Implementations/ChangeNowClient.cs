@@ -194,7 +194,7 @@ public sealed class ChangeNowClient : IChangeNowClient
         // Refresh MinAmountUsd from the live API (cached for 5 minutes).
         await TryRefreshMinAmountUsdAsync(coinFromRaw, netFromRaw, coinToRaw, netToRaw, ct);
 
-        var flows = BuildStandardFlowOnly();
+        var flows = query.Fixed ? BuildFixedFlowOnly() : BuildStandardFlowOnly();
 
         const decimal probeAmount = 500m;
 

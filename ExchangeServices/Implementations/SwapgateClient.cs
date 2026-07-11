@@ -161,13 +161,13 @@ public sealed class SwapgateClient : ISwapgateClient
         // Probe is in the QUOTE currency (PriceService sets it per quote: 0.01 BTC, 0.3 ETH; default USDT).
         var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
-            quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, false, ct);
+            quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, query.Fixed, ct);
 
         if (amountToGet is null && minRequired is > 0m)
         {
             probe = minRequired.Value * 1.1m;
             (amountToGet, _) = await GetRateWithMinAsync(
-                quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, false, ct);
+                quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, query.Fixed, ct);
         }
 
         if (amountToGet is null || amountToGet <= 0m) return null;

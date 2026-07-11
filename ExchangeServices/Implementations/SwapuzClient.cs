@@ -79,7 +79,7 @@ public sealed class SwapuzClient : ISwapuzClient
         // "200 BTC" on the BTC pair, which exceeds the max and made buy fail → the
         // pair showed sell-only.
         var probe = query.ProbeAmount ?? 200m;
-        var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, probe, ct);
+        var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, probe, ct, query.Fixed);
         if (rate is null || rate.Result <= 0)
         {
             ExchangeLog.Debug("[SWAPUZ BUY] rate null or result zero");
