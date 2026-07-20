@@ -13,10 +13,12 @@ public sealed class ExwellOptions
 
     // Codes as returned by /currencies (verify against the live list once keyed).
     public string XmrCode { get; set; } = "XMR";
-    public string UsdtCode { get; set; } = "USDTTRC20";
+    // USDT via ERC20 (Tron withdrawal fees run higher here).
+    public string UsdtCode { get; set; } = "USDT";
 
     // Buy-side probe in the quote currency (USDT) when ProbeAmount isn't supplied.
-    public decimal BuyProbeAmountUsdt { get; set; } = 100m;
+    // Must clear Exwell's USDT minimum (~600) — below it there's no tradeable rate.
+    public decimal BuyProbeAmountUsdt { get; set; } = 650m;
 
     public char PrivacyLevel { get; set; } = 'B';
     public decimal MinAmountUsd { get; set; }

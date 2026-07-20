@@ -59,10 +59,16 @@ public sealed class ExwellClient : IExwellClient
             .Where(kv => kv.Value is not null && kv.Value!.Available && !string.IsNullOrWhiteSpace(kv.Key))
             .Select(kv =>
             {
-                var ticker = kv.Key.Trim().ToUpperInvariant();
+                // The dictionary key IS Exwell's currency code (e.g. "XMR", "BTC",
+                // "USDTTRC20") — and that exact string is what /rate?from=&to= wants.
+                // ExchangeId MUST be that code: the price service copies it onto the
+                // AssetRef during resolution and Code() passes it straight through, so
+                // a "ticker|network" value here would produce a "not found" from /rate.
+                var code = kv.Key.Trim();
+                var ticker = code.ToUpperInvariant();
                 var network = (kv.Value!.Network ?? "").Trim();
                 return new ExchangeCurrency(
-                    ExchangeId: $"{ticker}|{network}".ToLowerInvariant(),
+                    ExchangeId: code,
                     Ticker: ticker,
                     Network: network);
             })

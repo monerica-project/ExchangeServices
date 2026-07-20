@@ -47,7 +47,7 @@ public static class ServiceCollectionExtensions
         services.AddCypherGoat(config);
         services.AddTrocador(config);
         services.AddZeroTrace(config);
-        services.AddGhostSwap(config);
+        //services.AddGhostSwap(config); // commented out per request
         services.AddWizardSwap(config);
         services.AddNexchange(config);
         services.AddExwell(config);
@@ -58,6 +58,8 @@ public static class ServiceCollectionExtensions
 
         //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
         services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
+        services.AddSwapzone(config);  // instant-exchange aggregator (needs a partner API key)
+        services.AddExplace(config);   // no-account instant swap, auto-routed (needs a partner API key)
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
 
         // auth issues 
@@ -73,8 +75,8 @@ public static class ServiceCollectionExtensions
         //  
         //    
 
-        // services.AddXChange(config);
-        //
+        services.AddXChange(config);
+
         return services;
     }
 
@@ -482,6 +484,51 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IChangeeClient>());
         services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IChangeeClient>());
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IChangeeClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddSwapzone(this IServiceCollection services, IConfiguration config)
+    {
+        // ── Swapzone ─────────────────────────────────────────────────────────────────
+        services.Configure<SwapzoneOptions>(config.GetSection("Swapzone"));
+
+        services.AddHttpClient<ISwapzoneClient, SwapzoneClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<SwapzoneOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(opt.BaseUrl)
+                ? "https://api.swapzone.io/v1/exchange/"
+                : opt.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
+        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddExplace(this IServiceCollection services, IConfiguration config)
+    {
+        // ── Explace ──────────────────────────────────────────────────────────────────
+        services.Configure<ExplaceOptions>(config.GetSection("Explace"));
+
+        services.AddHttpClient<IExplaceClient, ExplaceClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<ExplaceOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(opt.BaseUrl)
+                ? "https://api.explace.io/"
+                : opt.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IExplaceClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IExplaceClient>());
 
         return services;
     }
