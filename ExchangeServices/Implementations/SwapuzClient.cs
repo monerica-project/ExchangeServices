@@ -44,9 +44,10 @@ public sealed class SwapuzClient : ISwapuzClient
 
         ExchangeLog.Debug($"[SWAPUZ SELL] from={fromTicker}/{fromNet}, to={toTicker}/{toNet}");
 
-        // amount=1, so `result` is the net amount of `to` received for 1 `from` —
-        // i.e. the per-unit sell price (post-fee), consistent with the buy side.
-        var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, 1m, ct, query.Fixed);
+        // `result` is the net amount of `to` received for `probe` of `from`; the per-unit
+        // sell price (post-fee) is received / sent.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        var rate = await GetRateAsync(fromTicker, fromNet, toTicker, toNet, probe, ct, query.Fixed);
         if (rate is null || rate.Result <= 0)
         {
             ExchangeLog.Debug("[SWAPUZ SELL] rate null or result zero");
@@ -57,7 +58,7 @@ public sealed class SwapuzClient : ISwapuzClient
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: rate.Result,
+            Price: rate.Result / probe,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null

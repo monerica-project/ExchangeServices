@@ -41,16 +41,19 @@ public sealed class ChangeeClient : IChangeeClient
         var from = ResolveSymbol(query.Base);
         var to = ResolveSymbol(query.Quote);
 
-        var dto = await GetRateAsync(from, to, 1m, query.Fixed, ct);
+        // dto.Rate is the amount of `to` received for `probe` of `from` (the buy side divides
+        // by it), so the per-unit sell price is received / sent.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        var dto = await GetRateAsync(from, to, probe, query.Fixed, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
-        ExchangeLog.Debug($"[CHANGEE SELL] rate={dto.Rate}");
+        ExchangeLog.Debug($"[CHANGEE SELL] received={dto.Rate} for {probe}");
 
         return new PriceResult(
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: dto.Rate,
+            Price: dto.Rate / probe,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null

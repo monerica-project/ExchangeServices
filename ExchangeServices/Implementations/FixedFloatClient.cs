@@ -55,7 +55,8 @@ public sealed class FixedFloatClient : IFixedFloatClient
     {
         if (!HasAuth()) return null;
 
-        var attempts = new[] { ("from", 1m) };
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        var attempts = new[] { ("from", probe) };
 
         foreach (var fromCcy in CurrencyCodeCandidates(query.Base))
             foreach (var toCcy in CurrencyCodeCandidates(query.Quote))

@@ -78,11 +78,17 @@ public sealed class StealthExClient : IStealthExClient
             return null;
 
         // "reversed" estimation is only available for fixed rate (per API docs).
-        // So we probe with a fixed USDT amount and divide.
+        // So we probe with a fixed amount of the quote asset and divide.
         // API gives 0.4% less XMR → (probe/xmr)*0.996 = true per-XMR cost.
         var fromSymbol = (query.Quote.ExchangeId ?? query.Quote.Ticker).Trim().ToLowerInvariant();
         var toSymbol = (query.Base.ExchangeId ?? query.Base.Ticker).Trim().ToLowerInvariant();
         var toNetwork = ToStealthExNetwork(query.Base.Ticker, query.Base.Network);
+
+        // Probe in the QUOTE currency. PriceService sizes ProbeAmount per quote (e.g. ~0.025 BTC)
+        // so it clears each exchange's minimum without blowing past its maximum. Falling back to a
+        // fixed 500 only works for ~$1 stablecoins — sending 500 of BTC/ETH is rejected by the API,
+        // which is why the buy price was missing for those quotes.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : BuyProbeUsdt;
 
         var fromNetworkPrimary = ToStealthExNetwork(query.Quote.Ticker, query.Quote.Network);
         var fromNetworksToTry = BuildTronNetworkList(query.Quote.Network, fromNetworkPrimary);
@@ -94,13 +100,13 @@ public sealed class StealthExClient : IStealthExClient
                 toSymbol, toNetwork,
                 estimation: "direct",
                 rate: query.Fixed ? "fixed" : "floating",
-                amount: BuyProbeUsdt,
+                amount: probe,
                 ct);
 
             if (result is null || result.Value.EstimatedAmount <= 0) continue;
 
             // Raw probe/xmr already matches site rate - no correction needed
-            var rawPrice = BuyProbeUsdt / result.Value.EstimatedAmount;
+            var rawPrice = probe / result.Value.EstimatedAmount;
             var buyPrice = rawPrice;
 
             return new PriceResult(
@@ -110,7 +116,7 @@ public sealed class StealthExClient : IStealthExClient
                 Price: buyPrice,
                 TimestampUtc: DateTimeOffset.UtcNow,
                 CorrelationId: result.Value.CorrelationId,
-                Raw: $"buy probe={BuyProbeUsdt} xmr={result.Value.EstimatedAmount:F6} raw={rawPrice:F4} corrected={buyPrice:F4} (net={fromNetwork})");
+                Raw: $"buy probe={probe} xmr={result.Value.EstimatedAmount:F6} raw={rawPrice:F4} corrected={buyPrice:F4} (net={fromNetwork})");
         }
 
         return null;

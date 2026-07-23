@@ -85,11 +85,12 @@ public sealed class ExwellClient : IExwellClient
         var from = Code(query.Base);
         var to = Code(query.Quote);
 
-        var rate = await GetRateAsync(from, to, SellProbeXmr, ct);
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : SellProbeXmr;
+        var rate = await GetRateAsync(from, to, probe, ct);
         if (rate is null or <= 0) return null;
 
-        // rate = `to` received for SellProbeXmr of `from`; price = received / sent.
-        var price = rate.Value / SellProbeXmr;
+        // rate = `to` received for `probe` of `from`; price = received / sent.
+        var price = rate.Value / probe;
         return price <= 0 ? null : MakeResult(query, price);
     }
 

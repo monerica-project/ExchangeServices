@@ -73,7 +73,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
         var q = Resolve(query.Quote);
         if (b is null || q is null) return null;
 
-        var probe = 1m; // probe in the base currency; amount=1 keeps XMR→USDT behaviour identical
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m; // probe in the base currency
         var (toAmount, minDeposit) = await GetRateAsync(
             b.Value.Symbol, b.Value.Network, q.Value.Symbol, q.Value.Network, probe, ct);
 

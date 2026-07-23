@@ -72,12 +72,12 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
         var (from, to) = await ResolvePairAsync(query.Base, query.Quote, ct);
         if (from is null || to is null) return null;
 
-        // Send exactly 1 XMR → USDT; result is direct per-XMR sell price (matches site default)
-        var usdtReceived = await FetchEstimateAsync(from, to, amount: SellProbeXmr, ct, query.Fixed);
+        // Sell `probe` XMR → USDT; per-XMR price = received / sent.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : SellProbeXmr;
+        var usdtReceived = await FetchEstimateAsync(from, to, amount: probe, ct, query.Fixed);
         if (usdtReceived is null || usdtReceived <= 0) return null;
 
-        // API returns 0.4% less USDT due to affiliate fee — correct back to true rate
-        var sellPrice = usdtReceived.Value;
+        var sellPrice = usdtReceived.Value / probe;
         var dbg = $"sell from={from.Symbol}/{from.Network} to={to.Symbol}/{to.Network} result={usdtReceived}";
 
         return new PriceResult(

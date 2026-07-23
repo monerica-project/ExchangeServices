@@ -66,7 +66,8 @@ public sealed class SwapzoneClient : ISwapzoneClient
         var to = Ticker(query.Quote);
         if (from.Length == 0 || to.Length == 0) return null;
 
-        var dto = await GetRateAsync(from, to, SellProbeXmr, query.Fixed, ct);
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : SellProbeXmr;
+        var dto = await GetRateAsync(from, to, probe, query.Fixed, ct);
         if (dto is null || dto.AmountTo <= 0m || dto.AmountFrom <= 0m) return null;
 
         // Per-XMR quote = quote received / XMR sent. Use amountFrom from the response so a

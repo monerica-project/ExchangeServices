@@ -56,7 +56,9 @@ public sealed class XChangeClient : IXChangeClient
         // Into-XMR quotes are dropped by xChange from this server's IP — don't hang on them.
         if (opt.BlockToXmr && string.Equals(to, "xmr", StringComparison.OrdinalIgnoreCase)) return null;
 
-        var probe = opt.SellProbeXmr > 0 ? opt.SellProbeXmr : 1m;
+        var probe = query.ProbeAmount is decimal pa && pa > 0
+            ? pa
+            : (opt.SellProbeXmr > 0 ? opt.SellProbeXmr : 1m);
         var dto = await EstimateAsync(from, to, probe, ct);
         if (dto?.Estimate is null or <= 0) return null;
 

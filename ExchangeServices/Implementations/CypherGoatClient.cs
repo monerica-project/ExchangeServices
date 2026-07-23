@@ -77,25 +77,26 @@ public sealed class CypherGoatClient : ICypherGoatClient
         var b = Resolve(query.Base);
         var q = Resolve(query.Quote);
 
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
         var (amount, min, tvFiat) = await EstimateAsync(
             coin1: b.Coin, network1: b.Network,
             coin2: q.Coin, network2: q.Network,
-            depositAmount: 1m, ct);
+            depositAmount: probe, ct);
 
         if (amount is null && min is > 0m)
         {
-            var probe = min.Value * 1.1m;
+            var probeMin = min.Value * 1.1m;
             (amount, _, tvFiat) = await EstimateAsync(
                 b.Coin, b.Network,
                 q.Coin, q.Network,
-                probe, ct);
+                probeMin, ct);
             if (amount is null or <= 0m) return null;
-            return MakeResult(query, amount.Value / probe, CalcMinUsd(min, tvFiat, probe));
+            return MakeResult(query, amount.Value / probeMin, CalcMinUsd(min, tvFiat, probeMin));
         }
 
         if (amount is null or <= 0m) return null;
-        // amount = quote received per 1 base = sell price.
-        return MakeResult(query, amount.Value, CalcMinUsd(min, tvFiat, 1m));
+        // amount = quote received for `probe` base; per-unit sell price = received / sent.
+        return MakeResult(query, amount.Value / probe, CalcMinUsd(min, tvFiat, probe));
     }
 
     // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────

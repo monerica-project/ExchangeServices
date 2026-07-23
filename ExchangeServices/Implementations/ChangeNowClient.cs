@@ -294,6 +294,13 @@ public sealed class ChangeNowClient : IChangeNowClient
     /// Only runs if the cached value is older than 5 minutes.
     /// No-ops silently on any failure — the property falls back to opt.MinAmountUsd.
     /// </summary>
+    // USD-equivalent "from" coins whose min-amount is already in USD terms. The min endpoint
+    // returns the minimum in the FROM currency, so we may only store it in _apiMinAmountUsd when
+    // that currency is a dollar stablecoin — otherwise a BTC/ETH pair would write a crypto-
+    // denominated min (e.g. 0.00012 BTC) into a USD field, which then reads as a sub-$1 (blank).
+    private static readonly HashSet<string> UsdCoins =
+        new(StringComparer.OrdinalIgnoreCase) { "USDT", "USDC", "DAI", "USD", "BUSD", "TUSD", "USDD", "USDP" };
+
     private async Task TryRefreshMinAmountUsdAsync(
         string coinFrom,
         string? netFrom,
@@ -301,6 +308,9 @@ public sealed class ChangeNowClient : IChangeNowClient
         string? netTo,
         CancellationToken ct)
     {
+        // Only a dollar-stablecoin "from" gives a USD-denominated minimum.
+        if (!UsdCoins.Contains(coinFrom.Trim())) return;
+
         // Throttle: only hit the API once every 5 minutes.
         lock (_apiMinAmountLock)
         {

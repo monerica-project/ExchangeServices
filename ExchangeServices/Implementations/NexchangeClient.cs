@@ -85,7 +85,8 @@ public sealed class NexchangeClient : INexchangeClient
         var from = query.Base.Ticker.Trim().ToUpperInvariant();
         var to = query.Quote.Ticker.Trim().ToUpperInvariant();
 
-        if (await FetchRateAsync(from, to, SellProbeXmr, ct) is not { } rate
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : SellProbeXmr;
+        if (await FetchRateAsync(from, to, probe, ct) is not { } rate
             || rate.Deposit <= 0 || rate.Withdraw <= 0) return null;
 
         var price = rate.Withdraw / rate.Deposit;   // USDT per 1 XMR

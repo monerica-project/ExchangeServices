@@ -77,18 +77,19 @@ public sealed class BitaniaClient : IBitaniaClient
         var from = Resolve(query.Base);
         var to = Resolve(query.Quote);
 
-        var (recv, min) = await PriceAsync(from, to, 1m, query.Fixed, ct);
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        var (recv, min) = await PriceAsync(from, to, probe, query.Fixed, ct);
 
         if (recv is null && min is > 0m)
         {
-            var probe = min.Value * 1.1m;
-            (recv, _) = await PriceAsync(from, to, probe, query.Fixed, ct);
+            var probeMin = min.Value * 1.1m;
+            (recv, _) = await PriceAsync(from, to, probeMin, query.Fixed, ct);
             if (recv is null or <= 0m) return null;
-            return MakeResult(query, recv.Value / probe); // quote per 1 base
+            return MakeResult(query, recv.Value / probeMin); // quote per 1 base
         }
 
         if (recv is null or <= 0m) return null;
-        return MakeResult(query, recv.Value); // amount=1 → direct
+        return MakeResult(query, recv.Value / probe); // quote per 1 base
     }
 
     // ── BUY: Quote → Base (probe quote → base received) ───────────────────────

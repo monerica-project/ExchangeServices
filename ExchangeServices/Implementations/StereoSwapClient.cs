@@ -99,24 +99,25 @@ public sealed class StereoSwapClient : IStereoSwapClient
         var baseA = Resolve(query.Base);
         var quoteA = Resolve(query.Quote);
 
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
         var (receiveAmt, minAmt) = await CalculateAsync(
             fromCoin: baseA.Coin, fromNetwork: baseA.Network,
             toCoin: quoteA.Coin, toNetwork: quoteA.Network,
-            amount: 1m, ct);
+            amount: probe, ct);
 
         if (receiveAmt is null && minAmt is > 0m)
         {
-            var probe = minAmt.Value * 1.1m;
+            var probeMin = minAmt.Value * 1.1m;
             (receiveAmt, _) = await CalculateAsync(
                 baseA.Coin, baseA.Network,
                 quoteA.Coin, quoteA.Network,
-                probe, ct);
+                probeMin, ct);
             if (receiveAmt is null or <= 0m) return null;
-            return MakeResult(query, receiveAmt.Value / probe); // quote received per 1 base
+            return MakeResult(query, receiveAmt.Value / probeMin); // quote received per 1 base
         }
 
         if (receiveAmt is null or <= 0m) return null;
-        return MakeResult(query, receiveAmt.Value); // amount=1 → direct
+        return MakeResult(query, receiveAmt.Value / probe); // quote received per 1 base
     }
 
     // ── BUY: Quote → Base (probe quote → base received) ───────────────────────

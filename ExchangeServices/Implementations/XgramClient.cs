@@ -70,11 +70,13 @@ public sealed class XgramClient : IXgramClient
     {
         if (string.IsNullOrWhiteSpace(opt.ApiKey)) { Log("missing ApiKey"); return null; }
 
-        // amount=1 base → rate = quote received per 1 base = sell price.
-        var dto = await GetRateAsync(Code(query.Base), Code(query.Quote), ccyAmount: 1m, ct);
+        // dto.Rate is the quote amount received for `probe` base (the buy side divides by it);
+        // per-unit sell price = received / sent.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        var dto = await GetRateAsync(Code(query.Base), Code(query.Quote), ccyAmount: probe, ct);
         if (dto is null || !dto.Result || dto.Rate <= 0) return null;
 
-        return Result(query, dto.Rate);
+        return Result(query, dto.Rate / probe);
     }
 
     // ── BUY: Quote → Base (e.g. USDT/BTC/ETH → XMR) ──────────────────

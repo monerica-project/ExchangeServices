@@ -46,8 +46,8 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
         var (fromCoin, fromNet) = ResolveCoinAndNetwork(query.Base);
         var (toCoin, toNet) = ResolveCoinAndNetwork(query.Quote);
 
-        // Try 1 first, but if min_amount > 1, re-try with min
-        var amtIn = 1m;
+        // Probe the standard trade size, but if min_amount is higher, re-try with min
+        var amtIn = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
 
         var info = await PostInfoAsync(isRevert: false, fromCoin, toCoin, fromNet, toNet, amtIn, query.Fixed, ct);
         if (info is null) return null;
