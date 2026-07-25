@@ -58,7 +58,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
     // =========================
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var data = await ResolveAndQuoteAsync(query.Base, query.Quote, amountFrom: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, ct);
+        var data = await ResolveAndQuoteAsync(query.Base, query.Quote, amountFrom: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, query.Fixed, ct);
         if (data is null) return null;
 
         var from = data.AmountFrom;
@@ -77,7 +77,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         // from = USDT (query.Quote), to = XMR (query.Base)
-        var data = await ResolveAndQuoteAsync(query.Quote, query.Base, amountFrom: query.ProbeAmount ?? 500m, ct);
+        var data = await ResolveAndQuoteAsync(query.Quote, query.Base, amountFrom: query.ProbeAmount ?? 500m, query.Fixed, ct);
         if (data is null) return null;
 
         if (data.MinAmountFrom > 0)
@@ -97,18 +97,20 @@ public sealed class EtzSwapClient : IEtzSwapClient
     // RESOLVE (from catalog) + QUOTE — memoized; steady-state is one request.
     // =========================
     private async Task<RateData?> ResolveAndQuoteAsync(
-        AssetRef fromAsset, AssetRef toAsset, decimal amountFrom, CancellationToken ct)
+        AssetRef fromAsset, AssetRef toAsset, decimal amountFrom, bool fixedRate, CancellationToken ct)
     {
         var coinFrom = CoinCode(fromAsset);
         var coinTo = CoinCode(toAsset);
         if (coinFrom is null || coinTo is null) return null;
 
+        // Cache the supported network combo per pair (network availability is the same for
+        // float and fixed), but the rate itself is fetched per-rateType below.
         var key = $"{coinFrom}->{coinTo}";
 
         // Fast path: reuse the network combo that worked last time.
         if (_resolved.TryGetValue(key, out var known))
         {
-            var hit = await GetRateAsync(coinFrom, known.From, coinTo, known.To, amountFrom, ct);
+            var hit = await GetRateAsync(coinFrom, known.From, coinTo, known.To, amountFrom, fixedRate, ct);
             if (hit?.Data is not null) return hit.Data;
             _resolved.TryRemove(key, out _); // stale — re-discover
         }
@@ -121,7 +123,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
         foreach (var netFrom in fromNets)
             foreach (var netTo in toNets)
             {
-                var dto = await GetRateAsync(coinFrom, netFrom, coinTo, netTo, amountFrom, ct);
+                var dto = await GetRateAsync(coinFrom, netFrom, coinTo, netTo, amountFrom, fixedRate, ct);
                 if (dto?.Data is null) continue;
 
                 _resolved[key] = (netFrom, netTo);
@@ -351,7 +353,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
     // =========================
     private async Task<RateResponse?> GetRateAsync(
         string coinFrom, string networkFrom, string coinTo, string networkTo,
-        decimal amountFrom, CancellationToken ct)
+        decimal amountFrom, bool fixedRate, CancellationToken ct)
     {
         var qs = new List<string>
         {
@@ -359,7 +361,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
             $"networkFrom={Uri.EscapeDataString(networkFrom)}",
             $"coinTo={Uri.EscapeDataString(coinTo)}",
             $"networkTo={Uri.EscapeDataString(networkTo)}",
-            "rateType=float",
+            fixedRate ? "rateType=fixed" : "rateType=float",
             $"amountFrom={amountFrom.ToString(CultureInfo.InvariantCulture)}"
         };
 

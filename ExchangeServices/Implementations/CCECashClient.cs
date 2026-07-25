@@ -39,6 +39,9 @@ public sealed class CCECashClient : ICCECashClient
         opt = options.Value;
     }
 
+    // CCE's /calculate exchange_mode: "fixed" when the caller wants a locked (fixed) rate.
+    private static string ModeFor(PriceQuery query) => query.Fixed ? "fixed" : "float";
+
     // =========================
     // SELL: 1 XMR -> USDT price
     // =========================
@@ -47,9 +50,11 @@ public sealed class CCECashClient : ICCECashClient
         // The recent-prices feed is USDT-denominated, so it's only valid when the
         // quote IS USDT. For BTC/ETH (etc.) fall through to /calculate, which prices
         // the actual requested pair.
+        // The recent-prices feed is a FLOAT quote only. For a fixed-rate request we must
+        // skip it and price via /calculate with exchange_mode=fixed (all pairs).
         var quoteIsUsdt = (query.Quote.Ticker ?? "").Trim().ToUpperInvariant() == "USDT";
         var ticker = (query.Base.Ticker ?? "").Trim().ToUpperInvariant();
-        var price = quoteIsUsdt ? await GetRecentPriceForAsync(ticker, ct) : 0m;
+        var price = (!query.Fixed && quoteIsUsdt) ? await GetRecentPriceForAsync(ticker, ct) : 0m;
 
         if (price > 0)
         {
@@ -73,10 +78,11 @@ public sealed class CCECashClient : ICCECashClient
     // ==========================================
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        // USDT-only fast path (recent prices are in USDT); BTC/ETH go via /calculate.
+        // USDT-only FLOAT fast path (recent prices are in USDT). A fixed request skips it
+        // and prices via /calculate with exchange_mode=fixed.
         var quoteIsUsdt = (query.Quote.Ticker ?? "").Trim().ToUpperInvariant() == "USDT";
         var ticker = (query.Base.Ticker ?? "").Trim().ToUpperInvariant();
-        var price = quoteIsUsdt ? await GetRecentPriceForAsync(ticker, ct) : 0m;
+        var price = (!query.Fixed && quoteIsUsdt) ? await GetRecentPriceForAsync(ticker, ct) : 0m;
 
         if (price > 0)
         {
@@ -185,7 +191,7 @@ public sealed class CCECashClient : ICCECashClient
 
         if (string.IsNullOrWhiteSpace(fromAbbr) || string.IsNullOrWhiteSpace(toAbbr)) return null;
 
-        var data = await CalculateAsync(fromAbbr, fromChain, 1m, toAbbr, toChain, ct);
+        var data = await CalculateAsync(fromAbbr, fromChain, 1m, toAbbr, toChain, ct, ModeFor(query));
         var outAmt = data?.To?.FirstOrDefault()?.ToQuantity ?? 0m;
         if (outAmt <= 0) return null;
 
@@ -202,7 +208,7 @@ public sealed class CCECashClient : ICCECashClient
 
         if (string.IsNullOrWhiteSpace(usdtAbbr) || string.IsNullOrWhiteSpace(xmrAbbr)) return null;
 
-        var data = await CalculateAsync(usdtAbbr, usdtChain, 200m, xmrAbbr, xmrChain, ct);
+        var data = await CalculateAsync(usdtAbbr, usdtChain, 200m, xmrAbbr, xmrChain, ct, ModeFor(query));
         var xmrOut = data?.To?.FirstOrDefault()?.ToQuantity ?? 0m;
 
         ExchangeLog.Debug($"[CCE BUY CALC] xmrOut={xmrOut}");
@@ -217,11 +223,12 @@ public sealed class CCECashClient : ICCECashClient
     private async Task<CalcData?> CalculateAsync(
         string fromAbbr, string fromChain, decimal fromQty,
         string toAbbr, string toChain,
-        CancellationToken ct)
+        CancellationToken ct,
+        string exchangeMode = "float")
     {
         var reqObj = new CalcRequest
         {
-            ExchangeMode = "float",
+            ExchangeMode = exchangeMode,
             FromAbbr = fromAbbr,
             FromChain = fromChain,
             FromQuantity = fromQty,

@@ -74,16 +74,19 @@ public sealed class AlfaCashClient : IAlfaCashClient
             return null;
         }
 
-        ExchangeLog.Debug($"[ALFACASH SELL] rate={dto.Rate}");
+        var rate = EffectiveRate(dto, query.Fixed);
+        if (rate <= 0) return null;
+
+        ExchangeLog.Debug($"[ALFACASH SELL] fixed={query.Fixed} rate={rate}");
 
         return new PriceResult(
             Exchange:      ExchangeKey,
             Base:          query.Base,
             Quote:         query.Quote,
-            Price:         dto.Rate,
+            Price:         rate,
             TimestampUtc:  DateTimeOffset.UtcNow,
             CorrelationId: null,
-            Raw:           $"sell deposit={depositGate} withdrawal={withdrawalGate} rate={dto.Rate}"
+            Raw:           $"sell deposit={depositGate} withdrawal={withdrawalGate} fixed={query.Fixed} rate={rate}"
         );
     }
 
@@ -112,9 +115,12 @@ public sealed class AlfaCashClient : IAlfaCashClient
             return null;
         }
 
+        var rate = EffectiveRate(dto, query.Fixed);
+        if (rate <= 0) return null;
+
         // rate = XMR per 1 USDT → invert to get USDT per 1 XMR
-        var buyPrice = 1m / dto.Rate;
-        ExchangeLog.Debug($"[ALFACASH BUY] rawRate={dto.Rate}, buyPrice={buyPrice:F2}");
+        var buyPrice = 1m / rate;
+        ExchangeLog.Debug($"[ALFACASH BUY] fixed={query.Fixed} rawRate={rate}, buyPrice={buyPrice:F2}");
 
         return new PriceResult(
             Exchange:      ExchangeKey,
@@ -123,7 +129,7 @@ public sealed class AlfaCashClient : IAlfaCashClient
             Price:         buyPrice,
             TimestampUtc:  DateTimeOffset.UtcNow,
             CorrelationId: null,
-            Raw:           $"buy deposit={depositGate} withdrawal={withdrawalGate} rate={dto.Rate} buyPrice={buyPrice:F6}"
+            Raw:           $"buy deposit={depositGate} withdrawal={withdrawalGate} fixed={query.Fixed} rate={rate} buyPrice={buyPrice:F6}"
         );
     }
 
@@ -184,6 +190,16 @@ public sealed class AlfaCashClient : IAlfaCashClient
         return dto;
     }
 
+    // rate.json returns BOTH the fixed rate ("rate") and the floating rate ("rate_floating",
+    // null when floating isn't offered for the pair). Fixed board → "rate"; float board →
+    // "rate_floating" when available, else fall back to "rate" so AlfaCash never drops off the
+    // float board. When floating is unavailable the two rates are identical and the fixed board's
+    // echo-nulling collapses the duplicate, so AlfaCash shows fixed only where it's genuinely distinct.
+    private static decimal EffectiveRate(AlfaCashRateResult dto, bool fixedRate)
+        => fixedRate
+            ? dto.Rate
+            : (dto.RateFloating is decimal f && f > 0 ? f : dto.Rate);
+
     // =========================
     // HELPERS
     // =========================
@@ -238,6 +254,7 @@ public sealed class AlfaCashClient : IAlfaCashClient
         [JsonPropertyName("gate_withdrawal")] public string?  GateWithdrawal { get; set; }
         [JsonPropertyName("pair")]            public string?  Pair           { get; set; }
         [JsonPropertyName("rate")]            public decimal  Rate           { get; set; }
+        [JsonPropertyName("rate_floating")]   public decimal? RateFloating   { get; set; }
         [JsonPropertyName("error")]           public string?  Error          { get; set; }
     }
 
