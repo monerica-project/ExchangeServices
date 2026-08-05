@@ -59,6 +59,7 @@ public static class ServiceCollectionExtensions
         //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
         services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
         services.AddSwapzone(config);  // instant-exchange aggregator (needs a partner API key)
+        services.AddElCapo(config);    // no-KYC instant exchange (needs a partner API key)
         services.AddExplace(config);   // no-account instant swap, auto-routed (needs a partner API key)
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
 
@@ -507,6 +508,27 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
         services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddElCapo(this IServiceCollection services, IConfiguration config)
+    {
+        // ── El Capo ──────────────────────────────────────────────────────────────────
+        services.Configure<ElCapoOptions>(config.GetSection("ElCapo"));
+
+        services.AddHttpClient<IElCapoClient, ElCapoClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<ElCapoOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(opt.BaseUrl) ? "https://elcapo.io/" : opt.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IElCapoClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IElCapoClient>());
+        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IElCapoClient>());
 
         return services;
     }
