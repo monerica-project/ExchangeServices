@@ -459,6 +459,25 @@ public static class ServiceCollectionExtensions
         {
             var seconds = config.GetValue<int>("Quickex:RequestTimeoutSeconds", 10);
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 2, 30));
+        })
+        .ConfigurePrimaryHttpMessageHandler(sp =>
+        {
+            var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<QuickexOptions>>().Value;
+            var handler = new System.Net.Http.SocketsHttpHandler
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.All,
+                ConnectTimeout = TimeSpan.FromSeconds(15),
+            };
+
+            // Route Quickex through a proxy (Tor SOCKS on the VPS) when configured — its WAF
+            // firewall-drops the datacenter IP, but Tor exit IPs get through.
+            if (!string.IsNullOrWhiteSpace(o.HttpProxy))
+            {
+                handler.Proxy = new System.Net.WebProxy(o.HttpProxy);
+                handler.UseProxy = true;
+            }
+
+            return handler;
         });
 
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IQuickexClient>());

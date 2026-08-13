@@ -9,6 +9,12 @@ public sealed class QuickexOptions
     public int RequestTimeoutSeconds { get; set; } = 10;
     public string? ReferrerId { get; set; }  // e.g. "aff_your-id"
 
+    /// <summary>Optional outbound proxy for Quickex calls, e.g. "socks5://127.0.0.1:9050".
+    /// Quickex firewall-blocks some datacenter IPs (the production VPS gets a TCP timeout),
+    /// so on that host we route Quickex — and only Quickex — through the local Tor SOCKS proxy.
+    /// Empty = connect directly (the default; correct for dev machines that aren't blocked).</summary>
+    public string? HttpProxy { get; set; }
+
     // Quickex WAF blocks dotnet/httpclient UA strings — send a real browser UA.
     // This (not any API key) was the real reason the client previously "failed auth".
     public string UserAgent { get; set; } =
