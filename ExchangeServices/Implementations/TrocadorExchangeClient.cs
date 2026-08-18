@@ -218,7 +218,29 @@ public sealed class TrocadorClient : ITrocadorClient
 
         if (res is null || (int)res.Status < 200 || (int)res.Status >= 300) return null;
 
-        return JsonSerializer.Deserialize<TrocadorRateResult>(res.Body, JsonOpt);
+        var dto = JsonSerializer.Deserialize<TrocadorRateResult>(res.Body, JsonOpt);
+        if (dto is null) return null;
+
+        // For a FIXED request, Trocador's top-level amount_to is still the best OVERALL quote —
+        // usually a FLOATING provider (fixed:false), identical to the float rate — so it would be
+        // filtered out of the Fixed view as a float "echo". The genuinely fixed quotes live in the
+        // quotes list; pick the best one (highest amount_to) whose fixed flag is true instead.
+        if (isFixed)
+        {
+            var bestFixed = dto.Quotes?.Items?
+                .Where(q => q.AmountTo > 0m &&
+                            string.Equals((q.Fixed ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(q => q.AmountTo)
+                .FirstOrDefault();
+
+            if (bestFixed is null) return null; // no real fixed rate on offer for this pair
+
+            dto.AmountTo = bestFixed.AmountTo;
+            dto.Provider = bestFixed.Provider ?? dto.Provider;
+            dto.Fixed = true;
+        }
+
+        return dto;
     }
 
     // =========================
@@ -357,6 +379,22 @@ public sealed class TrocadorClient : ITrocadorClient
         [JsonPropertyName("amount_to")] public decimal AmountTo { get; set; }
         [JsonPropertyName("fixed")] public bool Fixed { get; set; }
         [JsonPropertyName("status")] public string? Status { get; set; }
+        [JsonPropertyName("quotes")] public TrocadorQuotesWrapper? Quotes { get; set; }
+    }
+
+    private sealed class TrocadorQuotesWrapper
+    {
+        [JsonPropertyName("quotes")] public List<TrocadorProviderQuote>? Items { get; set; }
+    }
+
+    private sealed class TrocadorProviderQuote
+    {
+        [JsonPropertyName("provider")] public string? Provider { get; set; }
+        [JsonPropertyName("amount_to")] public decimal AmountTo { get; set; }
+
+        // Trocador returns this per-provider flag as a STRING ("True"/"False"), unlike the
+        // top-level boolean — so keep it as a string and compare case-insensitively.
+        [JsonPropertyName("fixed")] public string? Fixed { get; set; }
     }
 
     private sealed class TrocadorCoinItem
