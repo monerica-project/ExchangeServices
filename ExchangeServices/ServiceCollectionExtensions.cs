@@ -47,7 +47,7 @@ public static class ServiceCollectionExtensions
         services.AddCypherGoat(config);
         services.AddTrocador(config);
         services.AddZeroTrace(config);
-        //services.AddGhostSwap(config); // commented out per request
+        services.AddGhostSwap(config);
         services.AddWizardSwap(config);
         services.AddNexchange(config);
         services.AddExwell(config);
@@ -59,6 +59,7 @@ public static class ServiceCollectionExtensions
         //services.AddSecureShift(config); // Cloudflare-blocked from server IPs
         services.AddQuickEx(config);   // works with a browser User-Agent, no key needed
         services.AddSwapzone(config);  // instant-exchange aggregator (needs a partner API key)
+        services.AddFlashift(config);  // instant-exchange aggregator (needs a Bearer API key; 10 req/min)
         services.AddElCapo(config);    // no-KYC instant exchange (needs a partner API key)
         services.AddExplace(config);   // no-account instant swap, auto-routed (needs a partner API key)
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
@@ -527,6 +528,29 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
         services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<ISwapzoneClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddFlashift(this IServiceCollection services, IConfiguration config)
+    {
+        // ── Flashift ─────────────────────────────────────────────────────────────────
+        // Aggregator; Bearer-authed; 10 req/min → the client caches each direction's best rate.
+        services.Configure<FlashiftOptions>(config.GetSection("Flashift"));
+
+        services.AddHttpClient<IFlashiftClient, FlashiftClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<FlashiftOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(opt.BaseUrl)
+                ? "https://interfacev2.flashift.app/api/dev/v2/"
+                : opt.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IFlashiftClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IFlashiftClient>());
 
         return services;
     }
