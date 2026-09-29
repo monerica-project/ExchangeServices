@@ -25,6 +25,7 @@ public static class ServiceCollectionExtensions
         // checked
         services.AddSageSwap(config);
         services.AddStealthEx(config);
+        services.AddXmr2Cex(config);    // XMR -> CEX-asset instant exchange (sell-only; SwapRaven swap option)
         services.AddChangeNow(config);
         services.AddBaltex(config);
         services.AddPegasusSwap(config);
@@ -1050,6 +1051,34 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+
+    public static IServiceCollection AddXmr2Cex(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<Xmr2CexOptions>(config.GetSection("Xmr2Cex"));
+
+        services.AddHttpClient<IXmr2CexClient, Xmr2CexClient>()
+            .ConfigureHttpClient((sp, client) =>
+            {
+                var opt = sp.GetRequiredService<IOptions<Xmr2CexOptions>>().Value;
+
+                client.BaseAddress = new Uri(opt.BaseUrl); // https://xmr2cex.com
+                client.Timeout = TimeSpan.FromSeconds(Math.Clamp(opt.TimeoutSeconds, 1, 60));
+
+                if (client.DefaultRequestHeaders.UserAgent.Count == 0 && !string.IsNullOrWhiteSpace(opt.UserAgent))
+                {
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+                }
+
+                // x-api-key (the account PIN) is set per-request in the client.
+            });
+
+        // Sell-only: exposed as a price + currency source. No IExchangeBuyPriceApi.
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IXmr2CexClient>());
+        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IXmr2CexClient>());
+
+        return services;
+    }
+
     public static IServiceCollection AddBaltex(this IServiceCollection services, IConfiguration config)
     {
         services.Configure<BaltexOptions>(config.GetSection("Baltex"));

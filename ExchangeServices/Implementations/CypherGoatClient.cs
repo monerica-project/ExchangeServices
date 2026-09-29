@@ -15,20 +15,34 @@ namespace ExchangeServices.Implementations;
 ///
 /// Auth: Authorization: Bearer YOUR_API_KEY
 ///
-/// GET /estimate?coin1=xmr&coin2=usdt&amount=1&network1=xmr&network2=trc20&best=true
-/// Response: { results: [{ exchange, amount, kycScore }], min, tradeValue_fiat, ... }
-///   results[0].amount = units of coin2 received for `amount` of coin1
-///   (best=true returns only the top provider)
+/// IMPORTANT: this client always calls /estimate with best=false, never
+/// best=true. best=true's success body is only { rates: { ExchangeName, Amount } }
+/// — no min, no tradeValue_fiat — and its failure body is a bare
+/// { error: "error getting rate" } with no numbers in it at all. Neither
+/// piece of metadata this client needs is recoverable from that shape.
+///
+/// best=false gives us what we actually need:
+///   Success: { rates: { Results: [{Exchange,Amount,KYCScore,Markup}], TradeValue_fiat,
+///                        TradeValue_btc, EstimateId }, min: <static per-coin1 minimum> }
+///     (rates.Min is always 0 server-side — dead field, ignore it; the real
+///     minimum on a successful call is the top-level "min".)
+///   Failure (amount below minimum): 404 with
+///     { error: "amount is less than the minimum value of 0.010000 for xmr" }
+///     — the minimum is only ever surfaced as text inside this message, so we
+///     regex it out. (Other failures, e.g. no route for the pair at all, 404
+///     with an error that doesn't mention "amount" — no minimum to recover.)
 ///
 /// SELL (XMR→USDT): coin1=xmr, coin2=usdt, amount=1
-///   → results[0].amount = USDT per 1 XMR (direct sell price)
+///   → best result's Amount = USDT per 1 XMR (direct sell price)
 ///
 /// BUY  (USDT→XMR): coin1=usdt, coin2=xmr, amount=probe
-///   → results[0].amount = XMR received → buyPrice = probe / amount
+///   → best result's Amount = XMR received → buyPrice = probe / amount
 ///
-/// MinAmountUsd = min * (tradeValue_fiat / depositAmount)
+/// MinAmountUsd = min * (tradeValue_fiat / depositAmount), both taken from the
+/// SAME successful call (either the first probe, or the min*1.1 retry).
 ///
-/// If amount < min, retry at min * 1.1
+/// If the probe amount < min, retry once at min * 1.1 (min learned from the
+/// failed call's error text).
 /// </summary>
 public sealed class CypherGoatClient : ICypherGoatClient
 {
@@ -37,6 +51,11 @@ public sealed class CypherGoatClient : ICypherGoatClient
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString
     };
+
+    // "amount is less than the minimum value of 0.010000 for xmr"
+    private static readonly Regex MinFromErrorRegex = new(
+        @"minimum value of\s*(?<min>[0-9]*\.?[0-9]+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly HttpClient _http;
     private readonly CypherGoatOptions opt;
@@ -78,25 +97,17 @@ public sealed class CypherGoatClient : ICypherGoatClient
         var q = Resolve(query.Quote);
 
         var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
-        var (amount, min, tvFiat) = await EstimateAsync(
-            coin1: b.Coin, network1: b.Network,
-            coin2: q.Coin, network2: q.Network,
-            depositAmount: probe, ct);
+        var result = await EstimateAsync(b.Coin, b.Network, q.Coin, q.Network, probe, ct);
 
-        if (amount is null && min is > 0m)
+        if (result.Amount is null && result.Min is > 0m)
         {
-            var probeMin = min.Value * 1.1m;
-            (amount, _, tvFiat) = await EstimateAsync(
-                b.Coin, b.Network,
-                q.Coin, q.Network,
-                probeMin, ct);
-            if (amount is null or <= 0m) return null;
-            return MakeResult(query, amount.Value / probeMin, CalcMinUsd(min, tvFiat, probeMin));
+            probe = result.Min.Value * 1.1m;
+            result = await EstimateAsync(b.Coin, b.Network, q.Coin, q.Network, probe, ct);
         }
 
-        if (amount is null or <= 0m) return null;
-        // amount = quote received for `probe` base; per-unit sell price = received / sent.
-        return MakeResult(query, amount.Value / probe, CalcMinUsd(min, tvFiat, probe));
+        if (result.Amount is null or <= 0m) return null;
+        // Amount = quote received for `probe` base; per-unit sell price = received / sent.
+        return MakeResult(query, result.Amount.Value / probe, CalcMinUsd(result.Min, result.TradeValueFiat, probe));
     }
 
     // ── BUY: Quote → Base (USDT/BTC/ETH → XMR) ───────────────────────────────
@@ -107,24 +118,17 @@ public sealed class CypherGoatClient : ICypherGoatClient
 
         // Probe is denominated in the QUOTE currency.
         var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var result = await EstimateAsync(q.Coin, q.Network, b.Coin, b.Network, probe, ct);
 
-        var (amount, min, tvFiat) = await EstimateAsync(
-            coin1: q.Coin, network1: q.Network,
-            coin2: b.Coin, network2: b.Network,
-            depositAmount: probe, ct);
-
-        if (amount is null && min is > 0m)
+        if (result.Amount is null && result.Min is > 0m)
         {
-            probe = min.Value * 1.1m;
-            (amount, _, tvFiat) = await EstimateAsync(
-                q.Coin, q.Network,
-                b.Coin, b.Network,
-                probe, ct);
+            probe = result.Min.Value * 1.1m;
+            result = await EstimateAsync(q.Coin, q.Network, b.Coin, b.Network, probe, ct);
         }
 
-        if (amount is null or <= 0m) return null;
-        // amount = base received for `probe` of quote → quote spent per 1 base.
-        return MakeResult(query, probe / amount.Value, CalcMinUsd(min, tvFiat, probe));
+        if (result.Amount is null or <= 0m) return null;
+        // Amount = base received for `probe` of quote → quote spent per 1 base.
+        return MakeResult(query, probe / result.Amount.Value, CalcMinUsd(result.Min, result.TradeValueFiat, probe));
     }
 
     // ── Currencies ────────────────────────────────────────────────────────────
@@ -160,103 +164,102 @@ public sealed class CypherGoatClient : ICypherGoatClient
     }
 
     // ── Core estimate call ────────────────────────────────────────────────────
-    // Returns (bestAmount, minAmount, tradeValueFiat).
-    // bestAmount     = best exchange's output amount for depositAmount of coin1.
-    // minAmount      = minimum deposit; bestAmount is null when below it.
-    // tradeValueFiat = USD value of depositAmount of coin1 (used to derive MinAmountUsd).
 
-    private async Task<(decimal? bestAmount, decimal? minAmount, decimal? tradeValueFiat)> EstimateAsync(
+    private readonly record struct EstimateResult(
+        decimal? Amount,
+        string? Exchange,
+        decimal? Min,
+        decimal? TradeValueFiat);
+
+    // Response shapes for best=false. Field names match the Go struct's
+    // (un-tagged, so json.Marshal emits its Go-cased field names verbatim);
+    // PropertyNameCaseInsensitive handles the case match.
+    private sealed class DetailedEstimateResponse
+    {
+        public RatesObject? Rates { get; set; }
+        public decimal Min { get; set; } // static per-coin1 minimum (only present on success)
+    }
+
+    private sealed class RatesObject
+    {
+        public List<ResultItem>? Results { get; set; }
+        public decimal TradeValue_fiat { get; set; }
+    }
+
+    private sealed class ResultItem
+    {
+        public string? Exchange { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+    private sealed class ErrorResponse
+    {
+        public string? Error { get; set; }
+    }
+
+    private async Task<EstimateResult> EstimateAsync(
         string coin1, string network1,
         string coin2, string network2,
         decimal depositAmount, CancellationToken ct)
     {
-        var qs = $"coin1={Uri.EscapeDataString(coin1.ToLowerInvariant())}" +
-                 $"&coin2={Uri.EscapeDataString(coin2.ToLowerInvariant())}" +
+        var qs = $"coin1={Uri.EscapeDataString(coin1)}" +
+                 $"&coin2={Uri.EscapeDataString(coin2)}" +
                  $"&amount={depositAmount.ToString(CultureInfo.InvariantCulture)}" +
-                 $"&network1={Uri.EscapeDataString(network1.ToLowerInvariant())}" +
-                 $"&network2={Uri.EscapeDataString(network2.ToLowerInvariant())}" +
-                 $"&best=true";
+                 $"&network1={Uri.EscapeDataString(network1)}" +
+                 $"&network2={Uri.EscapeDataString(network2)}" +
+                 $"&best=false";
 
         var fullUrl = $"{opt.BaseUrl.TrimEnd('/')}/estimate?{qs}";
-        var body = await GetAsync(fullUrl, ct);
-        if (body is null) return (null, null, null);
+        var (body, statusCode) = await GetWithStatusAsync(fullUrl, ct);
+        if (body is null) return default;
 
         try
         {
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-
-            // Parse minimum deposit
-            decimal? min = root.TryGetProperty("min", out var minEl) ? ReadDecimal(minEl) : null;
-            if (min <= 0m) min = null;
-
-            // Parse trade value in fiat (USD value of the requested depositAmount)
-            decimal? tvFiat = root.TryGetProperty("tradeValue_fiat", out var tvEl) ? ReadDecimal(tvEl) : null;
-            if (tvFiat <= 0m) tvFiat = null;
-
-            if (min is > 0m && depositAmount < min.Value)
+            if (statusCode is >= 200 and < 300)
             {
-                ExchangeLog.Debug($"[CYPHERGOAT] below min {min} for {coin1}→{coin2} amount={depositAmount}");
-                return (null, min, tvFiat);
+                var parsed = JsonSerializer.Deserialize<DetailedEstimateResponse>(body, JsonOpt);
+                var best = parsed?.Rates?.Results?
+                    .Where(r => r.Amount > 0m)
+                    .OrderByDescending(r => r.Amount)
+                    .FirstOrDefault();
+
+                if (best is null)
+                {
+                    ExchangeLog.Debug($"[CYPHERGOAT] no usable amount in: {body}");
+                    return new EstimateResult(null, null, parsed?.Min, parsed?.Rates?.TradeValue_fiat);
+                }
+
+                return new EstimateResult(best.Amount, best.Exchange, parsed!.Min, parsed.Rates!.TradeValue_fiat);
             }
 
-            // Format 1: { "results": [{ "amount": 323.661, ... }] }  (docs format)
-            if (root.TryGetProperty("results", out var results) &&
-                results.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in results.EnumerateArray())
-                {
-                    if (item.TryGetProperty("amount", out var amtEl))
-                    {
-                        var v = ReadDecimal(amtEl);
-                        if (v > 0m) return (v, min, tvFiat);
-                    }
-                }
-            }
+            // Non-2xx: the only recoverable info is the minimum, and only when
+            // the error text says so — see MinFromErrorRegex doc comment above.
+            var err = JsonSerializer.Deserialize<ErrorResponse>(body, JsonOpt)?.Error ?? "";
+            var m = MinFromErrorRegex.Match(err);
+            decimal? min = m.Success && decimal.TryParse(
+                m.Groups["min"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var mv) && mv > 0m
+                ? mv
+                : null;
 
-            // Format 2: { "rates": { "Amount": 323.661, "ExchangeName": "FixedFloat" } }
-            if (root.TryGetProperty("rates", out var rates))
-            {
-                if (rates.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var prop in new[] { "Amount", "amount" })
-                    {
-                        if (rates.TryGetProperty(prop, out var amtEl))
-                        {
-                            var v = ReadDecimal(amtEl);
-                            if (v > 0m) return (v, min, tvFiat);
-                        }
-                    }
-                }
-                else if (rates.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in rates.EnumerateArray())
-                    {
-                        foreach (var prop in new[] { "Amount", "amount" })
-                        {
-                            if (item.TryGetProperty(prop, out var amtEl))
-                            {
-                                var v = ReadDecimal(amtEl);
-                                if (v > 0m) return (v, min, tvFiat);
-                            }
-                        }
-                    }
-                }
-            }
-
-            ExchangeLog.Debug($"[CYPHERGOAT] no usable amount in: {body}");
-            return (null, min, tvFiat);
+            ExchangeLog.Debug($"[CYPHERGOAT] HTTP {statusCode} for {coin1}→{coin2} amount={depositAmount}: {err}");
+            return new EstimateResult(null, null, min, null);
         }
         catch (Exception ex)
         {
             ExchangeLog.Debug($"[CYPHERGOAT] parse error: {ex.Message} — {body}");
-            return (null, null, null);
+            return default;
         }
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
 
     private async Task<string?> GetAsync(string fullUrl, CancellationToken ct)
+    {
+        var (body, status) = await GetWithStatusAsync(fullUrl, ct);
+        return status is >= 200 and < 300 ? body : null;
+    }
+
+    private async Task<(string? Body, int StatusCode)> GetWithStatusAsync(string fullUrl, CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(Math.Clamp(opt.RequestTimeoutSeconds, 2, 30));
         ExchangeLog.Debug($"[CYPHERGOAT] GET {fullUrl}");
@@ -267,39 +270,31 @@ public sealed class CypherGoatClient : ICypherGoatClient
             req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {opt.ApiKey}");
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
-            {
-                ExchangeLog.Debug($"[CYPHERGOAT] Timed out");
-                return null;
-            }
-
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = await _http.SendAsync(req, cts.Token);
+            var body = await resp.Content.ReadAsStringAsync(ct);
 
             ExchangeLog.Debug($"[CYPHERGOAT] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 
-            if (!resp.IsSuccessStatusCode) return null;
-            return body;
+            // We deliberately return the body even for non-2xx responses —
+            // 404s here carry the only source of minimum-amount info.
+            return (body, (int)resp.StatusCode);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            ExchangeLog.Debug($"[CYPHERGOAT] Timed out");
+            return (null, 0);
         }
         catch (Exception ex)
         {
             ExchangeLog.Debug($"[CYPHERGOAT] Error: {ex.Message}");
-            return null;
+            return (null, 0);
         }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static decimal ReadDecimal(JsonElement el)
-    {
-        if (el.ValueKind == JsonValueKind.Number && el.TryGetDecimal(out var d)) return d;
-        if (el.ValueKind == JsonValueKind.String &&
-            decimal.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var ds)) return ds;
-        return 0m;
-    }
 
     private static decimal? CalcMinUsd(decimal? min, decimal? tradeValueFiat, decimal depositAmount) =>
         min is > 0m && tradeValueFiat is > 0m && depositAmount > 0m
