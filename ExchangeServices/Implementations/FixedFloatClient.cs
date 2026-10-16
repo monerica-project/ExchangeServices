@@ -24,7 +24,10 @@ public sealed class FixedFloatClient : IFixedFloatClient
         Converters = { new FlexibleBoolConverter() }
     };
 
-    private static readonly string[] RateTypes = { "float", "fixed" };
+    // The rate type is dictated by the query: a FLOAT query must never fall back to a fixed quote
+    // (it would be shown labelled "float"), and a FIXED query only accepts a fixed quote.
+    private static readonly string[] FloatOnly = { "float" };
+    private static readonly string[] FixedOnly = { "fixed" };
 
     // Errors that describe the OTHER (to) currency being unavailable. For a BUY
     // the "to" leg is always XMR, so these are identical across every candidate,
@@ -85,13 +88,13 @@ public sealed class FixedFloatClient : IFixedFloatClient
     {
         if (!HasAuth()) return null;
 
-        var probe = query.ProbeAmount ?? 500m;                 // quote units
+        var probe = ProbeSizing.BuyProbe(query, 500m);                 // quote units
         var attempts = new[] { ("from", probe), ("to", 1m) };  // "to" amount is XMR
 
         foreach (var fromCcy in CurrencyCodeCandidates(query.Quote)) // USDTTRC / BTC / ETH
             foreach (var toCcy in CurrencyCodeCandidates(query.Base))   // XMR
             {
-                var (data, toBlocked) = await TryQuoteAsync("BUY", fromCcy, toCcy, attempts, false, ct);
+                var (data, toBlocked) = await TryQuoteAsync("BUY", fromCcy, toCcy, attempts, query.Fixed, ct);
                 if (toBlocked) return null; // XMR payout under maintenance/offline — no buy quote exists
                 if (data is null) continue;
 
@@ -124,7 +127,7 @@ public sealed class FixedFloatClient : IFixedFloatClient
         IEnumerable<(string direction, decimal amount)> attempts, bool fixedRate, CancellationToken ct)
     {
         foreach (var (direction, amount) in attempts)
-            foreach (var type in RateTypes)
+            foreach (var type in fixedRate ? FixedOnly : FloatOnly)
             {
                 var resp = await PostPriceAsync(type, fromCcy, toCcy, direction, amount, fixedRate, ct);
 
@@ -186,9 +189,8 @@ public sealed class FixedFloatClient : IFixedFloatClient
     {
         var req = new PriceRequestDto
         {
-            // fixedRate forces a FIXED quote; otherwise keep today's behavior (the
-            // RateTypes loop value, float then fixed). This req object is the exact
-            // body that PostSignedAsync serializes, signs (X-API-SIGN), and sends.
+            // fixedRate forces a FIXED quote; otherwise the caller's float type. This req
+            // object is the exact body that PostSignedAsync serializes, signs (X-API-SIGN), and sends.
             Type = fixedRate ? "fixed" : type,
             FromCcy = fromCcy,
             ToCcy = toCcy,

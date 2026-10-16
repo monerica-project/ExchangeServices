@@ -90,7 +90,7 @@ public sealed class ChangeHeroClient : IChangeHeroClient
     {
         var from = Code(query.Quote);   // spend the quote
         var to = Code(query.Base);      // receive the base
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var result = await GetExchangeAmountAsync(from, to, probe, ct);
 
@@ -236,17 +236,24 @@ public sealed class ChangeHeroClient : IChangeHeroClient
                 req.Headers.TryAddWithoutValidation("User-Agent", opt.UserAgent);
             req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug($"[CHANGEHERO] Timed out: {method}");
                 return null;
             }
 
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = sent;
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
 
             ExchangeLog.Debug($"[CHANGEHERO] {method} HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 

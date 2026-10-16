@@ -33,7 +33,12 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
     private const decimal BuyProbeUsdt = 500m;
     private const decimal SellProbeXmr = 1m;
     private const decimal AffiliateFee = 0.004m;  // 0.4% affiliate fee
-    private const decimal ApiRateCorrection = 0.9834m; // empirical: API rates ~1.66% worse than site
+
+    // The buy estimate comes back net of our 0.4% affiliate fee, so the API's per-XMR cost is
+    // ~0.4% above the site rate; scale it back by (1 - fee) — exactly what the worked example in
+    // GetBuyPriceAsync documents (400/1.0686 * 0.996). This used to be a hard-coded "empirical"
+    // 0.9834 (~1.66%), which contradicted that documented math and understated the buy price.
+    internal const decimal ApiRateCorrection = 1m - AffiliateFee;
 
     private readonly SemaphoreSlim _currencyLock = new(1, 1);
     private List<CurrencyDto>? _currencies;
@@ -97,17 +102,19 @@ public sealed class SimpleSwapClient : ISimpleSwapClient
         var (from, to) = await ResolvePairAsync(query.Base, query.Quote, ct);
         if (from is null || to is null) return null;
 
-        // Use a fixed probe well above minimum. API returns 0.4% less XMR due to affiliate fee.
+        // Probe in the QUOTE currency: the caller's per-quote size (e.g. ~0.025 BTC) or a
+        // realistic default (BuyProbeUsdt for stables). A hard-coded 400 sent "400 BTC" on the
+        // BTC pair. API returns 0.4% less XMR due to affiliate fee.
         // Correct: (probe / xmrReceived) * (1 - fee) = true per-XMR cost
         // e.g. 400 USDT → 1.0686 XMR via API → 400/1.0686 * 0.996 = $372.8/XMR
-        const decimal fixedProbe = 400m;
-        var xmrReceived = await FetchEstimateAsync(to, from, amount: fixedProbe, ct, query.Fixed);
+        var probe = ProbeSizing.BuyProbe(query, BuyProbeUsdt);
+        var xmrReceived = await FetchEstimateAsync(to, from, amount: probe, ct, query.Fixed);
         if (xmrReceived is null || xmrReceived <= 0) return null;
 
-        var buyPrice = (fixedProbe / xmrReceived.Value) * ApiRateCorrection;
+        var buyPrice = (probe / xmrReceived.Value) * ApiRateCorrection;
         if (buyPrice <= 0) return null;
 
-        var dbg = $"buy probe={fixedProbe} xmr={xmrReceived:F6} price={buyPrice:F2}";
+        var dbg = $"buy probe={probe} xmr={xmrReceived:F6} price={buyPrice:F2}";
 
         return new PriceResult(
             Exchange: ExchangeKey,

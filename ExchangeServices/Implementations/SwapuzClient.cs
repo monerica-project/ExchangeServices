@@ -79,7 +79,7 @@ public sealed class SwapuzClient : ISwapuzClient
         // (e.g. 0.01 BTC, 0.3 ETH); default 200 suits USDT. Using a fixed 200 sent
         // "200 BTC" on the BTC pair, which exceeds the max and made buy fail → the
         // pair showed sell-only.
-        var probe = query.ProbeAmount ?? 200m;
+        var probe = ProbeSizing.BuyProbe(query, 200m);
         var rate = await GetRateAsync(usdtTicker, usdtNet, xmrTicker, xmrNet, probe, ct, query.Fixed);
         if (rate is null || rate.Result <= 0)
         {

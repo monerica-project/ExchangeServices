@@ -77,17 +77,19 @@ public sealed class BaltexClient : IBaltexClient
             string.IsNullOrWhiteSpace(toCurrency) || string.IsNullOrWhiteSpace(toNetwork))
             return null;
 
-        var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amount: (query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m), ct);
+        var probe = query.ProbeAmount is decimal pq && pq > 0 ? pq : 1m;
+        var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amount: probe, ct);
 
         if (dto?.ToAmount is null || dto.ToAmount <= 0) return null;
 
-        var minUsd = CalcMinUsd(dto, requestedAmount: 1m);
+        // amountFromUsd is the USD value of the amount we SENT (the probe), not of 1 unit.
+        var minUsd = CalcMinUsd(dto, requestedAmount: probe);
 
         return new PriceResult(
             Exchange: ExchangeKey,
             Base: query.Base,
             Quote: query.Quote,
-            Price: dto.ToAmount.Value / (query.ProbeAmount is decimal pr && pr > 0 ? pr : 1m),
+            Price: dto.ToAmount.Value / probe,
             TimestampUtc: DateTimeOffset.UtcNow,
             CorrelationId: null,
             Raw: null,
@@ -107,32 +109,35 @@ public sealed class BaltexClient : IBaltexClient
             string.IsNullOrWhiteSpace(toCurrency) || string.IsNullOrWhiteSpace(toNetwork))
             return null;
 
-        var testAmounts = new[] { 1m, 10m, 50m, 100m, 250m, 500m };
+        // Probe in the QUOTE currency (caller-sized for BTC/ETH). The old USDT-sized ladder
+        // (1…500) meant "500 BTC" on the BTC pair — and a 1-USDT probe gave a fee-distorted rate.
+        var amt = ProbeSizing.BuyProbe(query, 500m);
+        var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amt, ct);
 
-        foreach (var amt in testAmounts)
+        // Below the pair minimum (min is in the from/quote currency): retry once just above it.
+        if ((dto?.ToAmount is null || dto.ToAmount <= 0) && dto?.Min is decimal min && min > amt)
         {
-            var dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amt, ct);
-            if (dto?.ToAmount is null || dto.ToAmount <= 0) continue;
-
-            var usdtPerXmr = amt / dto.ToAmount.Value;
-            if (usdtPerXmr <= 0) continue;
-
-            // min is in USDT (source) = USD directly
-            var minUsd = CalcMinUsd(dto, requestedAmount: amt);
-
-            return new PriceResult(
-                Exchange: ExchangeKey,
-                Base: query.Base,
-                Quote: query.Quote,
-                Price: usdtPerXmr,
-                TimestampUtc: DateTimeOffset.UtcNow,
-                CorrelationId: null,
-                Raw: null,
-                MinAmountUsd: minUsd ?? (opt.MinAmountUsd > 0m ? opt.MinAmountUsd : null)
-            );
+            amt = ProbeSizing.Round(min * 1.1m);
+            dto = await FetchRateAsync(fromCurrency, fromNetwork, toCurrency, toNetwork, amt, ct);
         }
 
-        return null;
+        if (dto?.ToAmount is null || dto.ToAmount <= 0) return null;
+
+        var quotePerXmr = amt / dto.ToAmount.Value;
+        if (quotePerXmr <= 0) return null;
+
+        var minUsd = CalcMinUsd(dto, requestedAmount: amt);
+
+        return new PriceResult(
+            Exchange: ExchangeKey,
+            Base: query.Base,
+            Quote: query.Quote,
+            Price: quotePerXmr,
+            TimestampUtc: DateTimeOffset.UtcNow,
+            CorrelationId: null,
+            Raw: null,
+            MinAmountUsd: minUsd ?? (opt.MinAmountUsd > 0m ? opt.MinAmountUsd : null)
+        );
     }
 
     // ── Core rate fetch ───────────────────────────────────────────────────────

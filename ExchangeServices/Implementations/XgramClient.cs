@@ -88,7 +88,7 @@ public sealed class XgramClient : IXgramClient
         var toCcy = Code(query.Base);
         // Probe is in the QUOTE currency. rate = base received for `probe` of quote,
         // so buyPrice = quote sent / base received = probe / rate.
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var dto = await GetRateAsync(fromCcy, toCcy, ccyAmount: probe, ct);
         if (dto is null || !dto.Result || dto.Rate <= 0)

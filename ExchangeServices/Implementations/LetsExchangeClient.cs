@@ -220,13 +220,14 @@ public sealed class LetsExchangeClient : ILetsExchangeClient
         };
 
         var json = JsonSerializer.Serialize(body, JsonOpt);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         var res = await http.SendForStringWithRetryAsync(() =>
         {
             var req = new HttpRequestMessage(HttpMethod.Post, path);
             AddAuth(req);
-            req.Content = content; // NOTE: StringContent can be re-used safely for same payload
+            // NEW content per attempt: disposing the request after attempt 1 disposes its
+            // content too, so a shared StringContent made every retry throw ObjectDisposed.
+            req.Content = new StringContent(json, Encoding.UTF8, "application/json");
             return req;
         }, timeout, opt.RetryCount, ct);
 

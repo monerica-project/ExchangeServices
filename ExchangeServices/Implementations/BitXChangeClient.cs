@@ -48,13 +48,35 @@ public sealed class BitXChangeClient : IBitXChangeClient
     // ── Asset resolution ───────────────────────────────────────────────────────
     // Map an AssetRef (ticker + optional network) to BitXChange's (symbol, network).
     // A bare ticker resolves to its native chain (XMR→XMR, BTC→BTC, ETH→ETH,
-    // USDT→TRC20 via opts); an explicit AssetRef.Network is honoured as-is.
+    // USDT→TRC20 via opts); an explicit AssetRef.Network is mapped to BitXChange's own network
+    // names (the /crypto `name` values /price consumes: TRC20, ERC20, BEP20, XMR, BTC, ETH).
     private (string Symbol, string Network)? Resolve(AssetRef a)
     {
         var ticker = (a.Ticker ?? "").Trim().ToUpperInvariant();
         if (ticker.Length == 0) return null;
-        var network = string.IsNullOrWhiteSpace(a.Network) ? NativeNetwork(ticker) : a.Network!.Trim();
-        return (ticker, network);
+        return (ticker, MapNetwork(ticker, a.Network));
+    }
+
+    // Callers pass friendly network names (MoneroPriceNow's USDTTRC is AssetRef("USDT", "Tron")).
+    // BitXChange doesn't know "Tron" — its USDT network is "TRC20" (the option default, and what
+    // the API's deposit/withdraw network lists use) — so sending to_network=Tron missed the pair.
+    internal string MapNetwork(string ticker, string? network)
+    {
+        var n = (network ?? "").Trim();
+        if (n.Length == 0) return NativeNetwork(ticker);
+
+        var isToken = !string.Equals(NativeNetwork(ticker), ticker, StringComparison.OrdinalIgnoreCase)
+                      || ticker.Equals(opt.UsdtSymbol, StringComparison.OrdinalIgnoreCase);
+
+        return n.ToUpperInvariant() switch
+        {
+            "MAINNET" or "NATIVE" => NativeNetwork(ticker),
+            "TRON" or "TRX" or "TRC20" or "TRC-20" =>
+                ticker.Equals(opt.UsdtSymbol, StringComparison.OrdinalIgnoreCase) ? opt.UsdtNetwork : "TRC20",
+            "ETHEREUM" or "ERC20" or "ERC-20" or "ETH" => isToken ? "ERC20" : "ETH",
+            "BINANCE SMART CHAIN" or "BSC" or "BEP20" or "BEP-20" => "BEP20",
+            _ => n,
+        };
     }
 
     private string NativeNetwork(string ticker)
@@ -98,7 +120,7 @@ public sealed class BitXChangeClient : IBitXChangeClient
 
         // Probe is denominated in the QUOTE currency (PriceService sets it per quote:
         // 0.01 BTC, 0.3 ETH; default = opt.BuyProbeAmountUsdt for USDT).
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
         var (toAmount, minDeposit) = await GetRateAsync(
             q.Value.Symbol, q.Value.Network, b.Value.Symbol, b.Value.Network, probe, ct);
 
@@ -317,17 +339,24 @@ public sealed class BitXChangeClient : IBitXChangeClient
             req.Headers.TryAddWithoutValidation("X-API-Key", opt.ApiKey);
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug($"[BITXCHANGE] Timed out");
                 return null;
             }
 
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = sent;
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
 
             ExchangeLog.Debug($"[BITXCHANGE] HTTP {(int)resp.StatusCode}: {body[..Math.Min(300, body.Length)]}");
 

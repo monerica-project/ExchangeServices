@@ -30,8 +30,12 @@ public sealed class EtzSwapClient : IEtzSwapClient
     private decimal _liveMinAmountUsd;
 
     // Etz catalog: COIN -> its networks. The network "Key" is what the rate endpoint
-    // wants (USDT -> "TRX"/"ETH"/..., XMR -> "XMR"). Loaded once.
+    // wants (USDT -> "TRX"/"ETH"/..., XMR -> "XMR"). Loaded once on success; an EMPTY catalog
+    // (failed/timed-out first fetch) is only kept for CatalogFailureRetry, then refetched —
+    // previously one bad first call blanked EtzSwap until the process restarted.
     private IReadOnlyDictionary<string, List<NetInfo>>? _catalog;
+    private DateTime _catalogRetryAfterUtc = DateTime.MinValue;
+    private static readonly TimeSpan CatalogFailureRetry = TimeSpan.FromMinutes(2);
     private readonly SemaphoreSlim _catalogLock = new(1, 1);
 
     // Memoizes the (networkFrom, networkTo) that returned 2xx for a coinFrom->coinTo,
@@ -77,10 +81,12 @@ public sealed class EtzSwapClient : IEtzSwapClient
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
         // from = USDT (query.Quote), to = XMR (query.Base)
-        var data = await ResolveAndQuoteAsync(query.Quote, query.Base, amountFrom: query.ProbeAmount ?? 500m, query.Fixed, ct);
+        var data = await ResolveAndQuoteAsync(query.Quote, query.Base, amountFrom: ProbeSizing.BuyProbe(query, 500m), query.Fixed, ct);
         if (data is null) return null;
 
-        if (data.MinAmountFrom > 0)
+        // MinAmountFrom is in the FROM (quote) currency — only ≈ USD for a dollar stablecoin.
+        // Writing a BTC/ETH min (e.g. 0.0003) into this shared USD field made it flip per pair.
+        if (data.MinAmountFrom > 0 && ProbeSizing.IsUsdStable(query.Quote.Ticker))
             _liveMinAmountUsd = data.MinAmountFrom;
 
         var from = data.AmountFrom;
@@ -191,12 +197,12 @@ public sealed class EtzSwapClient : IEtzSwapClient
     // =========================
     private async Task<IReadOnlyDictionary<string, List<NetInfo>>> GetCatalogAsync(CancellationToken ct)
     {
-        if (_catalog is not null) return _catalog;
+        if (CatalogUsable()) return _catalog!;
 
         await _catalogLock.WaitAsync(ct);
         try
         {
-            if (_catalog is not null) return _catalog;
+            if (CatalogUsable()) return _catalog!;
 
             var raw = await FetchCoinsRawAsync(ct);
             var map = raw is null
@@ -204,6 +210,7 @@ public sealed class EtzSwapClient : IEtzSwapClient
                 : ParseCatalog(raw);
 
             _catalog = map;
+            if (map.Count == 0) _catalogRetryAfterUtc = DateTime.UtcNow + CatalogFailureRetry;
 
             string Nets(string c) => map.TryGetValue(c, out var l) && l.Count > 0
                 ? string.Join(",", l.Select(x => x.Key)) : "(none)";
@@ -217,6 +224,10 @@ public sealed class EtzSwapClient : IEtzSwapClient
         }
         finally { _catalogLock.Release(); }
     }
+
+    // A non-empty catalog is kept for the process lifetime; an empty one only until its retry time.
+    private bool CatalogUsable()
+        => _catalog is not null && (_catalog.Count > 0 || DateTime.UtcNow < _catalogRetryAfterUtc);
 
     private async Task<string?> FetchCoinsRawAsync(CancellationToken ct)
     {

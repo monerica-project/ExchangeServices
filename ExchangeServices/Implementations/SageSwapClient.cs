@@ -90,7 +90,7 @@ public sealed class SageSwapClient : ISageSwapClient, IExchangeCurrencyApi
         {
             // Stablecoin quotes arrive with no ProbeAmount; 1 unit is under SageSwap's
             // minimum (422), so default to a realistic ~$200 buy that clears it.
-            var probe = query.ProbeAmount ?? 200m;
+            var probe = ProbeSizing.BuyProbe(query, 200m);
             var inGwei = (long)Math.Round(probe * GweiScale, MidpointRounding.AwayFromZero);
             var a = await GetFixedAmountsAsync(query.Quote.ExchangeId, query.Base.ExchangeId, inGwei, ct);
             if (a is null || a.Value.In <= 0 || a.Value.Out <= 0) return null;

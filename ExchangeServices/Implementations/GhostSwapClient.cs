@@ -161,7 +161,7 @@ public sealed class GhostSwapClient : IGhostSwapClient
         var to = ResolveCode(query.Base);    // receive XMR
         if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) return null;
 
-        var probe = query.ProbeAmount ?? (opt.BuyReferenceAmountUsdt > 0 ? opt.BuyReferenceAmountUsdt : 100m);
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyReferenceAmountUsdt > 0 ? opt.BuyReferenceAmountUsdt : 100m);
 
         foreach (var (f, t) in ExpandPairCandidates(from, to))
         {
@@ -185,8 +185,9 @@ public sealed class GhostSwapClient : IGhostSwapClient
             var usdtPerXmr = sent / xmrOut;
             if (usdtPerXmr <= 0) continue;
 
-            // from-side is USDT here, so the public quote's `min` is already ~USD.
-            if (dto.Quote.Min > 0)
+            // `min` is in the from-side (quote) currency — ~USD only when that's a dollar stable.
+            // A BTC/ETH min must not land in the shared USD field (it flipped between pairs).
+            if (dto.Quote.Min > 0 && ProbeSizing.IsUsdStable(query.Quote.Ticker))
             {
                 lock (_apiMinAmountLock)
                     _apiMinAmountUsd = dto.Quote.Min;

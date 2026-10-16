@@ -88,7 +88,7 @@ public sealed class StealthExClient : IStealthExClient
         // so it clears each exchange's minimum without blowing past its maximum. Falling back to a
         // fixed 500 only works for ~$1 stablecoins — sending 500 of BTC/ETH is rejected by the API,
         // which is why the buy price was missing for those quotes.
-        var probe = query.ProbeAmount is decimal pa && pa > 0 ? pa : BuyProbeUsdt;
+        var probe = ProbeSizing.BuyProbe(query, BuyProbeUsdt);
 
         var fromNetworkPrimary = ToStealthExNetwork(query.Quote.Ticker, query.Quote.Network);
         var fromNetworksToTry = BuildTronNetworkList(query.Quote.Network, fromNetworkPrimary);

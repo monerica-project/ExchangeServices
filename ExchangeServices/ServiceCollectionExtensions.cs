@@ -80,6 +80,38 @@ public static class ServiceCollectionExtensions
 
         services.AddXChange(config);
 
+        services.AddExchangeConnectionRecycling();
+
+        return services;
+    }
+
+    /// <summary>How long a pooled connection may live before it is recycled (re-resolving DNS).</summary>
+    public static readonly TimeSpan ExchangePooledConnectionLifetime = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The exchange clients are registered transient but captured by long-lived singletons
+    /// (PriceService / SwapQuoteService hold IEnumerable&lt;IExchangePriceApi&gt;), so each typed
+    /// HttpClient — and its primary handler — lives for the whole process and IHttpClientFactory's
+    /// handler rotation never happens. Recycling at the CONNECTION level keeps DNS changes and
+    /// dead keep-alive sockets from being pinned forever.
+    ///
+    /// Applied centrally as a post-configure step (after every client's own
+    /// ConfigurePrimaryHttpMessageHandler): any SocketsHttpHandler primary that was left with the
+    /// default infinite PooledConnectionLifetime gets <see cref="ExchangePooledConnectionLifetime"/>.
+    /// Handlers that already set a lifetime are left alone; this only ever shortens "infinite".
+    /// </summary>
+    public static IServiceCollection AddExchangeConnectionRecycling(this IServiceCollection services)
+    {
+        services.PostConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(o =>
+            o.HttpMessageHandlerBuilderActions.Add(b =>
+            {
+                if (b.PrimaryHandler is SocketsHttpHandler s &&
+                    s.PooledConnectionLifetime == Timeout.InfiniteTimeSpan)
+                {
+                    s.PooledConnectionLifetime = ExchangePooledConnectionLifetime;
+                }
+            }));
+
         return services;
     }
 

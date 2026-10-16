@@ -117,7 +117,7 @@ public sealed class CypherGoatClient : ICypherGoatClient
         var q = Resolve(query.Quote);
 
         // Probe is denominated in the QUOTE currency.
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
         var result = await EstimateAsync(q.Coin, q.Network, b.Coin, b.Network, probe, ct);
 
         if (result.Amount is null && result.Min is > 0m)

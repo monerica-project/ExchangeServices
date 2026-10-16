@@ -88,7 +88,7 @@ public sealed class GoDexClient : IGoDexClient
 
         // Probe is denominated in the QUOTE currency; honor PriceService's per-quote
         // probe when set, otherwise fall back to the client's own default.
-        var probe    = query.ProbeAmount ?? PickProbeAmount(query.Quote);
+        var probe    = query.ProbeAmount is decimal pa && pa > 0 ? ProbeSizing.Round(pa) : PickProbeAmount(query.Quote);
         var dto      = await PostInfoAsync(fromCode, toCode, fromNetwork, toNetwork, amount: probe, ct);
         var received = dto?.Amount ?? 0m;
         // GoDex signals unavailable pairs (e.g. ETH→XMR) with amount:"0" → treat as no price.

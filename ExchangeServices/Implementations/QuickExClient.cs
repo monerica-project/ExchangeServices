@@ -183,7 +183,7 @@ public sealed class QuickexClient : IQuickexClient
         if (baseI is null || quoteI is null) return null;
 
         // Probe is in the QUOTE currency (PriceService sets it per quote: 0.01 BTC, 0.3 ETH; default USDT).
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var (amt, min) = await FetchRateAsync(
             quoteI.Value.Currency, quoteI.Value.Network,
@@ -310,18 +310,25 @@ public sealed class QuickexClient : IQuickexClient
             req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
             req.Headers.TryAddWithoutValidation("Referer", "https://quickex.io/");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug($"[QUICKEX] Timed out");
                 return (null, 0);
             }
 
-            using var resp = await sendTask;
+            using var resp = sent;
             var code = (int)resp.StatusCode;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
 
             if (!resp.IsSuccessStatusCode && code != 422)
             {

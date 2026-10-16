@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="ExchangeServices/ExchangeServices.csproj" />
   <Project Path="ExchangeServices.Console/ExchangeServices.Console.csproj" />
+  <Project Path="ExchangeServices.Tests/ExchangeServices.Tests.csproj" />
 </Solution>

@@ -99,7 +99,7 @@ public sealed class ExwellClient : IExwellClient
     {
         var from = Code(query.Quote);
         var to = Code(query.Base);
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var rate = await GetRateAsync(from, to, probe, ct);
         if (rate is null or <= 0) return null;

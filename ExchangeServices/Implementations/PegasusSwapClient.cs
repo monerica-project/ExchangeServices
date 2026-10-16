@@ -130,7 +130,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
         var networkFrom = PegasusNetwork(query.Quote);   // USDT -> 'ETH'
         var networkTo = PegasusNetwork(query.Base);      // XMR -> 'XMR'
 
-        var probeUsdt = query.ProbeAmount ?? 500m;
+        var probeUsdt = ProbeSizing.BuyProbe(query, 500m);
 
         var dto = await CallExchangeCoinAsync(
             amount: probeUsdt,
@@ -196,7 +196,8 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
 
         // DIAGNOSTIC: show exactly what we send (the framework log masks this as ?*)
         Log($"REQ  exchange-coin url={url}");
-        Log($"AUTH x-api-payload='{payload}'  x-api-signature={ComputeSignatureHex(payload, opt.Secret)}");
+        // Never log the signature: the payload is a constant, so the HMAC is a reusable credential.
+        Log($"AUTH x-api-payload='{payload}'  x-api-signature=***");
 
         var (status, raw) = await SendForStringWithRetryAsync(
             requestFactory: () =>

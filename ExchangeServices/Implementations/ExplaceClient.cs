@@ -84,7 +84,7 @@ public sealed class ExplaceClient : IExplaceClient
 
         // Probe is denominated in the quote currency. The site sizes BTC/ETH; for USDT it leaves
         // it null, so use a realistic default (small amounts give fee-distorted rates).
-        var probe = query.ProbeAmount is decimal p && p > 0 ? p : opt.DefaultBuyProbeUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.DefaultBuyProbeUsdt);
 
         var dto = await EstimateAsync(query.Quote, query.Base, probe, query.Fixed, ct);
         if (dto is null || dto.AmountFrom <= 0m || dto.AmountTo <= 0m) return null;

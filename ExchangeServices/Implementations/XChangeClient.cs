@@ -166,22 +166,28 @@ public sealed class XChangeClient : IXChangeClient
         {
             p = new Process { StartInfo = psi };
             if (!p.Start()) return null;
+            // Drain BOTH pipes concurrently: stderr is redirected, and if nobody reads it a chatty
+            // child can fill the pipe buffer and block forever (deadlock until the timeout).
             var stdout = p.StandardOutput.ReadToEndAsync(linked.Token);
+            var stderr = p.StandardError.ReadToEndAsync(linked.Token);
             await p.WaitForExitAsync(linked.Token);
             var body = await stdout;
+            try { await stderr; } catch { /* diagnostics only */ }
             return p.ExitCode == 0 ? body : null;
-        }
-        catch (OperationCanceledException)
-        {
-            try { p?.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return null;
         }
         catch
         {
+            // Timeout (linked CancelAfter), caller cancellation or any other failure.
             return null;
         }
         finally
         {
+            // Never leave the child running: kill it whenever we bail out before it exited.
+            try
+            {
+                if (p is not null && !p.HasExited) p.Kill(entireProcessTree: true);
+            }
+            catch { /* best effort (not started / already gone) */ }
             p?.Dispose();
         }
     }

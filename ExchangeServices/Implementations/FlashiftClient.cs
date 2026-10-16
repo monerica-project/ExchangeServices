@@ -73,7 +73,7 @@ public sealed class FlashiftClient : IFlashiftClient
         if (!Map(query.Base, out var xmrSym, out var xmrNet)) return null;   // xmr (to)
         if (!Map(query.Quote, out var fromSym, out var fromNet)) return null; // btc/eth/usdt (from)
 
-        var probe = Round(query.ProbeAmount is decimal p && p > 0 ? p : opt.DefaultBuyProbeUsdt);
+        var probe = Round(ProbeSizing.BuyProbe(query, opt.DefaultBuyProbeUsdt));
         var (flt, fix) = await BestRatesAsync(fromSym, fromNet, xmrSym, xmrNet, probe, ct);
         var rate = query.Fixed ? fix : flt; // received(xmr)/sent(quote) = XMR per 1 quote
         if (rate is not decimal r || r <= 0m) return null;

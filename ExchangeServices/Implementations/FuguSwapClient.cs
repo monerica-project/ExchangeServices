@@ -94,93 +94,53 @@ public sealed class FuguSwapClient : IFuguSwapClient
 
         var fromNetworkCandidates = NetworkCandidates(query.Quote, fromNet);
 
+        // Probe in the QUOTE currency: the caller's per-quote size (e.g. ~0.025 BTC) or a realistic
+        // stablecoin default. The old USDT-sized seed ladder (25…1000) and the 10–5000 refine clamp
+        // were in quote units, i.e. "25 BTC"…"5000 BTC" on the BTC pair — always over the max.
+        var probe = ProbeSizing.BuyProbe(query, 500m);
+
         foreach (var fromNetwork in fromNetworkCandidates)
         {
-            // Step 1: find any valid quote with a sane USDT amount
-            var seedAmounts = new[] { 25m, 50m, 100m, 200m, 500m, 1000m };
-            PriceDto? first = null;
-            decimal usedFrom = 0m;
-
-            foreach (var amt in seedAmounts)
-            {
-                var dto = await GetPriceDtoAsync(
-                    type: "float",
-                    amount: amt,
-                    from: fromCoin,
-                    to: toCoin,
-                    fromNetwork: NormalizeOptionalNetwork(fromNetwork),
-                    toNetwork: NormalizeOptionalNetwork(toNet),
-                    ct);
-
-                if (dto is null)
-                    continue;
-
-                // If they return min_deposit and we're below it, try min_deposit once
-                if (dto.MinDeposit > 0 && amt < dto.MinDeposit)
-                {
-                    var dtoMin = await GetPriceDtoAsync(
-                        type: "float",
-                        amount: dto.MinDeposit,
-                        from: fromCoin,
-                        to: toCoin,
-                        fromNetwork: NormalizeOptionalNetwork(fromNetwork),
-                        toNetwork: NormalizeOptionalNetwork(toNet),
-                        ct);
-
-                    if (dtoMin is not null && dtoMin.AmountTo > 0)
-                    {
-                        first = dtoMin;
-                        usedFrom = dto.MinDeposit;
-                        break;
-                    }
-
-                    continue;
-                }
-
-                if (dto.AmountTo > 0)
-                {
-                    first = dto;
-                    usedFrom = amt;
-                    break;
-                }
-            }
-
-            if (first is null || first.AmountTo <= 0 || usedFrom <= 0)
-                continue;
-
-            // implied USDT per 1 XMR
-            var p1 = SafeDiv(usedFrom, first.AmountTo);
-            if (p1 <= 0)
-                continue;
-
-            // Step 2: refine once using the implied amount needed for ~1 XMR
-            var refine = Clamp(p1, 10m, 5000m);
-
-            // respect min_deposit if provided
-            if (first.MinDeposit > 0 && refine < first.MinDeposit)
-                refine = first.MinDeposit;
-
-            var second = await GetPriceDtoAsync(
+            var sent = probe;
+            var dto = await GetPriceDtoAsync(
                 type: "float",
-                amount: refine,
+                amount: sent,
                 from: fromCoin,
                 to: toCoin,
                 fromNetwork: NormalizeOptionalNetwork(fromNetwork),
                 toNetwork: NormalizeOptionalNetwork(toNet),
                 ct);
 
-            if (second is null || second.AmountTo <= 0)
+            if (dto is null)
                 continue;
 
-            var p2 = SafeDiv(refine, second.AmountTo);
-            if (p2 <= 0)
+            // Below the pair minimum: retry once just above min_deposit (quote units).
+            if (dto.MinDeposit > 0 && sent < dto.MinDeposit)
+            {
+                sent = ProbeSizing.Round(dto.MinDeposit * 1.1m);
+                dto = await GetPriceDtoAsync(
+                    type: "float",
+                    amount: sent,
+                    from: fromCoin,
+                    to: toCoin,
+                    fromNetwork: NormalizeOptionalNetwork(fromNetwork),
+                    toNetwork: NormalizeOptionalNetwork(toNet),
+                    ct);
+            }
+
+            if (dto is null || dto.AmountTo <= 0)
+                continue;
+
+            // quote spent per 1 XMR = what we actually sent / XMR received
+            var price = SafeDiv(sent, dto.AmountTo);
+            if (price <= 0)
                 continue;
 
             return new PriceResult(
                 Exchange: ExchangeKey,
                 Base: query.Base,
                 Quote: query.Quote,
-                Price: p2, // USDT needed per 1 XMR (approx)
+                Price: price,
                 TimestampUtc: DateTimeOffset.UtcNow,
                 CorrelationId: null,
                 Raw: null
@@ -444,7 +404,6 @@ public sealed class FuguSwapClient : IFuguSwapClient
     }
 
     private static decimal SafeDiv(decimal a, decimal b) => b == 0 ? 0 : a / b;
-    private static decimal Clamp(decimal v, decimal min, decimal max) => v < min ? min : (v > max ? max : v);
 
     // =========================
     // DTOs

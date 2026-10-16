@@ -99,7 +99,7 @@ public sealed class BitaniaClient : IBitaniaClient
 
         var baseCode = Resolve(query.Base);
         var quoteCode = Resolve(query.Quote);
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var (recv, min) = await PriceAsync(quoteCode, baseCode, probe, query.Fixed, ct);
 
@@ -241,16 +241,24 @@ public sealed class BitaniaClient : IBitaniaClient
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
             req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
+
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug("[BITANIA] Timed out");
                 return null;
             }
 
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = sent;
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
             if (!resp.IsSuccessStatusCode)
             {
                 ExchangeLog.Debug($"[BITANIA] HTTP {(int)resp.StatusCode}: {Trunc(body)}");

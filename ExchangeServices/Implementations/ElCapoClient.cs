@@ -83,7 +83,7 @@ public sealed class ElCapoClient : IElCapoClient
 
         // Probe is denominated in the quote currency. The site sizes BTC/ETH; for USDT it leaves
         // it null, so use a realistic default (small amounts give fee-distorted rates).
-        var probe = query.ProbeAmount is decimal p && p > 0 ? p : DefaultBuyProbeUsdt;
+        var probe = ProbeSizing.BuyProbe(query, DefaultBuyProbeUsdt);
 
         var dto = await GetRateAsync(query.Quote, query.Base, probe, query.Fixed, ct);
         if (dto is null || dto.AmountTo <= 0m || dto.AmountFrom <= 0m) return null;

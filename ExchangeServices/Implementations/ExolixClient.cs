@@ -32,7 +32,8 @@ public sealed class ExolixClient : IExolixClient
     // the working one is memoized so steady-state is a single rate call.
     private static readonly string[] UsdtNetPref =
         { "ETH", "SOL", "BSC", "MATIC", "ARBITRUM", "OPTIMISM", "AVAXC" };
-    private volatile string? _usdtNet;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _usdtNetByPair =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -135,7 +136,7 @@ public sealed class ExolixClient : IExolixClient
     // SELL: send 1 XMR → read toAmount (USDT received) directly.
     public async Task<PriceResult?> GetSellPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: false, amount: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, fixedRate: query.Fixed, ct);
+        var rate = await QuotePairAsync(query.Base, query.Quote, "XMR", "USDT", amount: query.ProbeAmount is decimal probe && probe > 0 ? probe : 1m, fixedRate: query.Fixed, ct);
         if (rate is null || rate.FromAmount <= 0 || rate.ToAmount <= 0) return null;
 
         var px = rate.ToAmount / rate.FromAmount;
@@ -147,11 +148,12 @@ public sealed class ExolixClient : IExolixClient
     // BUY: how much USDT to send to receive 1 XMR.
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var rate = await QuoteXmrUsdtAsync(query, usdtIsFrom: true, amount: query.ProbeAmount ?? 500m, fixedRate: query.Fixed, ct);
+        var rate = await QuotePairAsync(query.Quote, query.Base, "USDT", "XMR", amount: ProbeSizing.BuyProbe(query, 500m), fixedRate: query.Fixed, ct);
         if (rate is null || rate.FromAmount <= 0 || rate.ToAmount <= 0) return null;
 
-        // coinFrom is USDT here, so rate.MinAmount is in USDT ≈ USD.
-        if (rate.MinAmount > 0)
+        // rate.MinAmount is in the FROM (quote) currency — only a USD stablecoin makes it ≈ USD.
+        // A BTC/ETH min (e.g. 0.0003 BTC) must not be written into the shared USD field.
+        if (rate.MinAmount > 0 && ProbeSizing.IsUsdStable(query.Quote.Ticker))
         {
             lock (_apiMinAmountLock)
                 _apiMinAmountUsd = rate.MinAmount;
@@ -163,33 +165,45 @@ public sealed class ExolixClient : IExolixClient
         return new PriceResult(ExchangeKey, query.Base, query.Quote, usdtPerXmr, DateTimeOffset.UtcNow);
     }
 
-    // Quote XMR<->USDT, resolving the USDT side to a network Exolix actually pairs with
-    // XMR (never Tron). Tries the memoized network first, then the preference ladder.
-    private async Task<RateResponse?> QuoteXmrUsdtAsync(
-        PriceQuery query, bool usdtIsFrom, decimal amount, bool fixedRate, CancellationToken ct)
+    // Quote from→to. Only a USDT leg is network-qualified: Exolix doesn't carry USDT on Tron and
+    // routes XMR<->USDT on EVM/SOL chains, so the USDT side walks the preference ladder (memoized
+    // network first). Any other coin (XMR, BTC, ETH, …) is sent without a network so Exolix uses
+    // its native chain — trying BTC "on ETH/BSC" could price a wrapped token instead.
+    // The memo is keyed per pair+direction so one pair's working network never leaks into another.
+    private async Task<RateResponse?> QuotePairAsync(
+        AssetRef fromAsset, AssetRef toAsset, string fromDefault, string toDefault,
+        decimal amount, bool fixedRate, CancellationToken ct)
     {
-        var xmr  = (query.Base.Ticker  ?? "XMR").Trim().ToUpperInvariant();
-        var usdt = (query.Quote.Ticker ?? "USDT").Trim().ToUpperInvariant();
+        var from = Coin(fromAsset, fromDefault);
+        var to = Coin(toAsset, toDefault);
+        var fromIsUsdt = IsUsdt(from);
+        var toIsUsdt = IsUsdt(to);
 
+        if (!fromIsUsdt && !toIsUsdt)
+        {
+            return await GetRateAsync(from, null, to, null, amount, fixedRate, ct);
+        }
+
+        var memoKey = $"{from}->{to}";
         var candidates = new List<string>();
-        var memo = _usdtNet;
-        if (memo is not null) candidates.Add(memo);
+        if (_usdtNetByPair.TryGetValue(memoKey, out var memo)) candidates.Add(memo);
         foreach (var n in UsdtNetPref)
             if (!candidates.Contains(n, StringComparer.OrdinalIgnoreCase)) candidates.Add(n);
 
         foreach (var net in candidates)
         {
-            // XMR side needs no network; only the USDT side is network-qualified.
-            var rate = usdtIsFrom
-                ? await GetRateAsync(usdt, net, xmr, null, amount, fixedRate, ct)   // BUY:  USDT/net -> XMR
-                : await GetRateAsync(xmr, null, usdt, net, amount, fixedRate, ct);  // SELL: XMR -> USDT/net
+            var rate = await GetRateAsync(
+                from, fromIsUsdt ? net : null,
+                to, toIsUsdt ? net : null,
+                amount, fixedRate, ct);
 
             if (rate is not null && rate.FromAmount > 0 && rate.ToAmount > 0)
             {
-                if (!string.Equals(_usdtNet, net, StringComparison.OrdinalIgnoreCase))
+                if (!_usdtNetByPair.TryGetValue(memoKey, out var known) ||
+                    !string.Equals(known, net, StringComparison.OrdinalIgnoreCase))
                 {
-                    _usdtNet = net;
-                    ExchangeLog.Debug($"[EXOLIX] resolved USDT network = {net} for the XMR pair");
+                    _usdtNetByPair[memoKey] = net;
+                    ExchangeLog.Debug($"[EXOLIX] resolved USDT network = {net} for {memoKey}");
                 }
                 return rate;
             }
@@ -197,6 +211,14 @@ public sealed class ExolixClient : IExolixClient
 
         return null;
     }
+
+    private static string Coin(AssetRef a, string fallback)
+    {
+        var t = (a.Ticker ?? "").Trim().ToUpperInvariant();
+        return t.Length == 0 ? fallback : t;
+    }
+
+    private static bool IsUsdt(string coin) => coin.Equals("USDT", StringComparison.OrdinalIgnoreCase);
 
     // ------------------------------------------------------------
     // Core rate call

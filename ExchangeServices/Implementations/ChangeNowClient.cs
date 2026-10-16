@@ -196,7 +196,9 @@ public sealed class ChangeNowClient : IChangeNowClient
 
         var flows = query.Fixed ? BuildFixedFlowOnly() : BuildStandardFlowOnly();
 
-        const decimal probeAmount = 500m;
+        // Probe in the QUOTE currency (the caller sizes BTC/ETH; 500 is only sane for stables —
+        // a hard-coded 500 sent "500 BTC" on the BTC pair and nulled the buy side).
+        var probeAmount = ProbeSizing.BuyProbe(query, 500m);
 
         foreach (var flow in flows)
         {
@@ -268,7 +270,7 @@ public sealed class ChangeNowClient : IChangeNowClient
     private static List<string> BuildFixedFlowOnly()
         => new() { "fixed-rate" };
 
-    private static List<string> BuildFlowAttempts(string? configuredFlow)
+    internal static List<string> BuildFlowAttempts(string? configuredFlow)
     {
         var list = new List<string>();
 
@@ -276,11 +278,13 @@ public sealed class ChangeNowClient : IChangeNowClient
         if (!string.IsNullOrWhiteSpace(f))
             list.Add(f);
 
+        // A FLOAT query must never fall back to "fixed-rate": that would return a fixed quote
+        // labelled float. If the exchange has no floating quote for the pair, return nothing.
+        if (string.Equals(f, "fixed-rate", StringComparison.OrdinalIgnoreCase))
+            list.Clear();
+
         if (!list.Contains("standard", StringComparer.OrdinalIgnoreCase))
             list.Add("standard");
-
-        if (!list.Contains("fixed-rate", StringComparer.OrdinalIgnoreCase))
-            list.Add("fixed-rate");
 
         return list;
     }

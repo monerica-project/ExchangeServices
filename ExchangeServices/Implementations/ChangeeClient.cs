@@ -71,7 +71,7 @@ public sealed class ChangeeClient : IChangeeClient
         var from = ResolveSymbol(query.Quote); // USDT
         var to = ResolveSymbol(query.Base);  // XMR
 
-        var probeUsdt = query.ProbeAmount ?? 200m;
+        var probeUsdt = ProbeSizing.BuyProbe(query, 200m);
         var dto = await GetRateAsync(from, to, probeUsdt, query.Fixed, ct);
         if (dto is null || dto.Result != true || dto.Rate <= 0) return null;
 
@@ -147,8 +147,9 @@ public sealed class ChangeeClient : IChangeeClient
     // =========================
     private async Task<string?> GetAsync(string url, CancellationToken ct)
     {
-        // Log URL with key masked
-        ExchangeLog.Debug($"[CHANGEE] GET {url.Replace(opt.ApiKey, "***")}");
+        // Log URL with key masked (string.Replace throws on an empty key, so guard it).
+        var masked = string.IsNullOrEmpty(opt.ApiKey) ? url : url.Replace(opt.ApiKey, "***");
+        ExchangeLog.Debug($"[CHANGEE] GET {masked}");
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("Accept", "application/json");

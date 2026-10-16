@@ -133,7 +133,7 @@ public sealed class StereoSwapClient : IStereoSwapClient
         var quoteA = Resolve(query.Quote);
 
         // Probe is denominated in the QUOTE currency (PriceService sets it per quote).
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         var (receiveAmt, minAmt) = await CalculateAsync(
             fromCoin: quoteA.Coin, fromNetwork: quoteA.Network,
@@ -229,17 +229,24 @@ public sealed class StereoSwapClient : IStereoSwapClient
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
             req.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug("[STEREOSWAP] Timed out");
                 return null;
             }
 
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = sent;
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
 
             if (!resp.IsSuccessStatusCode)
             {

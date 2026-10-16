@@ -156,7 +156,7 @@ public sealed class ZeroTraceClient : IZeroTraceClient
         if (string.IsNullOrWhiteSpace(fromCcy) || string.IsNullOrWhiteSpace(toCcy)) return null;
 
         // Quote-denominated probe (BTC/ETH supplied by PriceService; USDT default 200).
-        var probe = query.ProbeAmount ?? 200m;
+        var probe = ProbeSizing.BuyProbe(query, 200m);
 
         var dto = await PostPriceAsync(
             type: "float",

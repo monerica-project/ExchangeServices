@@ -108,7 +108,7 @@ public sealed class NexchangeClient : INexchangeClient
     {
         var xmr = query.Base.Ticker.Trim().ToUpperInvariant();
         var usdt = query.Quote.Ticker.Trim().ToUpperInvariant();
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
 
         if (await FetchRateAsync(usdt, xmr, probe, ct) is not { } rate  // from USDT -> to XMR
             || rate.Deposit <= 0 || rate.Withdraw <= 0) return null;

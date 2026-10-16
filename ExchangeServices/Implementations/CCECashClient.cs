@@ -191,12 +191,15 @@ public sealed class CCECashClient : ICCECashClient
 
         if (string.IsNullOrWhiteSpace(fromAbbr) || string.IsNullOrWhiteSpace(toAbbr)) return null;
 
-        var data = await CalculateAsync(fromAbbr, fromChain, 1m, toAbbr, toChain, ct, ModeFor(query));
+        // Sell the caller's probe (base units; e.g. a $-sized XMR amount or SwapRaven's trade size)
+        // rather than a fixed 1 unit, and normalise back to a per-1-base price.
+        var probe = query.ProbeAmount is decimal pa && pa > 0 ? ProbeSizing.Round(pa) : 1m;
+        var data = await CalculateAsync(fromAbbr, fromChain, probe, toAbbr, toChain, ct, ModeFor(query));
         var outAmt = data?.To?.FirstOrDefault()?.ToQuantity ?? 0m;
         if (outAmt <= 0) return null;
 
         // Calculate endpoint already returns post-fee amount — no multiplier needed
-        return new PriceResult(ExchangeKey, query.Base, query.Quote, outAmt, DateTimeOffset.UtcNow, data?.OrderId, null);
+        return new PriceResult(ExchangeKey, query.Base, query.Quote, outAmt / probe, DateTimeOffset.UtcNow, data?.OrderId, null);
     }
 
     private async Task<PriceResult?> GetBuyPriceViaCalculateAsync(PriceQuery query, CancellationToken ct)
@@ -208,7 +211,9 @@ public sealed class CCECashClient : ICCECashClient
 
         if (string.IsNullOrWhiteSpace(usdtAbbr) || string.IsNullOrWhiteSpace(xmrAbbr)) return null;
 
-        var data = await CalculateAsync(usdtAbbr, usdtChain, 200m, xmrAbbr, xmrChain, ct, ModeFor(query));
+        // Probe in the QUOTE currency (a fixed 200 meant "200 BTC" on the BTC pair).
+        var probe = ProbeSizing.BuyProbe(query, 200m);
+        var data = await CalculateAsync(usdtAbbr, usdtChain, probe, xmrAbbr, xmrChain, ct, ModeFor(query));
         var xmrOut = data?.To?.FirstOrDefault()?.ToQuantity ?? 0m;
 
         ExchangeLog.Debug($"[CCE BUY CALC] xmrOut={xmrOut}");
@@ -216,7 +221,7 @@ public sealed class CCECashClient : ICCECashClient
         if (xmrOut <= 0) return null;
 
         // Calculate endpoint already returns post-fee amount — no multiplier needed
-        var price = 200m / xmrOut;
+        var price = probe / xmrOut;
         return new PriceResult(ExchangeKey, query.Base, query.Quote, price, DateTimeOffset.UtcNow, data?.OrderId, null);
     }
 

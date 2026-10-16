@@ -70,7 +70,8 @@ public sealed class TrocadorClient : ITrocadorClient
         // Quote the user's ACTUAL amount, not a hardcoded 1 unit — for cheap coins (KAS, DOGE,
         // XLM, …) 1 unit is below the exchange minimum and Trocador returns nothing. Price is
         // then normalized back to per-unit so the caller's `amount × Price` stays correct.
-        var probeAmt = query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m;
+        // Round to what is actually sent on the wire, and divide by that same amount.
+        var probeAmt = RoundAmount(query.ProbeAmount is decimal pa && pa > 0 ? pa : 1m);
 
         var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, amountFrom: probeAmt, ct, isFixed: query.Fixed);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
@@ -103,7 +104,7 @@ public sealed class TrocadorClient : ITrocadorClient
 
         // Probe is denominated in the QUOTE currency (PriceService sets it per quote:
         // 0.01 BTC, 0.3 ETH; default USDT). Fall back to the USDT reference amount.
-        var probe = query.ProbeAmount ?? opt.BuyReferenceAmountUsdt;
+        var probe = RoundAmount(ProbeSizing.BuyProbe(query, opt.BuyReferenceAmountUsdt));
 
         var rateTask = GetRateAsync(tickerFrom, networkFrom, tickerTo, networkTo, probe, ct, isFixed: query.Fixed);
         var minTask = GetCoinMinimumAsync("usdt", opt.UsdtNetwork, ct); // already USD
@@ -190,6 +191,19 @@ public sealed class TrocadorClient : ITrocadorClient
         }
     }
 
+    // Amounts go on the wire with 4 dp (Trocador's historic format) — but a small amount
+    // (e.g. a probe of 0.00002 BTC) would format as "0.0000", so below 4-dp resolution keep up
+    // to 8 dp instead. Callers divide by the ROUNDED value, so price = received / sent exactly.
+    internal static decimal RoundAmount(decimal v)
+    {
+        if (v <= 0m) return v;
+        var r4 = Math.Round(v, 4, MidpointRounding.AwayFromZero);
+        return r4 > 0m ? r4 : ProbeSizing.Round(v);
+    }
+
+    internal static string FormatAmount(decimal v)
+        => RoundAmount(v).ToString("0.########", System.Globalization.CultureInfo.InvariantCulture);
+
     // =========================
     // PRIVATE: GET /new_rate
     // =========================
@@ -204,7 +218,7 @@ public sealed class TrocadorClient : ITrocadorClient
                  $"&network_from={Uri.EscapeDataString(networkFrom)}" +
                  $"&ticker_to={Uri.EscapeDataString(tickerTo)}" +
                  $"&network_to={Uri.EscapeDataString(networkTo)}" +
-                 $"&amount_from={amountFrom.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}" +
+                 $"&amount_from={FormatAmount(amountFrom)}" +
                  $"&type={(isFixed ? "fixed" : "float")}" +
                  $"&payment=False";
 

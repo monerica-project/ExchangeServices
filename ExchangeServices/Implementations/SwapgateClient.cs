@@ -159,7 +159,7 @@ public sealed class SwapgateClient : ISwapgateClient
         if (baseI is null || quoteI is null) return null;
 
         // Probe is in the QUOTE currency (PriceService sets it per quote: 0.01 BTC, 0.3 ETH; default USDT).
-        var probe = query.ProbeAmount ?? opt.BuyProbeAmountUsdt;
+        var probe = ProbeSizing.BuyProbe(query, opt.BuyProbeAmountUsdt);
         var (amountToGet, minRequired) = await GetRateWithMinAsync(
             quoteI.Value.Currency, quoteI.Value.Network, baseI.Value.Currency, baseI.Value.Network, probe, query.Fixed, ct);
 
@@ -277,17 +277,24 @@ public sealed class SwapgateClient : ISwapgateClient
             if (!string.IsNullOrWhiteSpace(opt.UserAgent))
                 req.Headers.TryAddWithoutValidation("User-Agent", opt.UserAgent);
 
-            var sendTask = _http.SendAsync(req, ct);
-            var timeoutTask = Task.Delay(timeout, ct);
+            // Linked CTS so a timeout actually CANCELS the in-flight request (the old
+            // Task.WhenAny(send, Delay) pattern abandoned it and left it running).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
 
-            if (await Task.WhenAny(sendTask, timeoutTask) == timeoutTask)
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(req, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 ExchangeLog.Debug($"[SWAPGATE] Timed out: {fullUrl}");
                 return (null, 0);
             }
 
-            using var resp = await sendTask;
-            var body = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            using var resp = sent;
+            var body = await resp.Content.ReadAsStringAsync(timeoutCts.Token);
             var code = (int)resp.StatusCode;
 
             if (!resp.IsSuccessStatusCode && code != 422)

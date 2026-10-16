@@ -18,4 +18,8 @@
     <Folder Include="Extensions\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExchangeServices.Tests" />
+  </ItemGroup>
+
 </Project>
