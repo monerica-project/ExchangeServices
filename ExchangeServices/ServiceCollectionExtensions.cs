@@ -62,6 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSwapzone(config);  // instant-exchange aggregator (needs a partner API key)
         services.AddFlashift(config);  // instant-exchange aggregator (needs a Bearer API key; 10 req/min)
         services.AddElCapo(config);    // no-KYC instant exchange (needs a partner API key)
+        services.AddAnonChange(config); // no-KYC, own reserves (signed partner API)
         services.AddExplace(config);   // no-account instant swap, auto-routed (needs a partner API key)
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
 
@@ -605,6 +606,28 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IElCapoClient>());
         services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IElCapoClient>());
         services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<IElCapoClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddAnonChange(this IServiceCollection services, IConfiguration config)
+    {
+        // ── AnonChange ───────────────────────────────────────────────────────────────
+        services.Configure<AnonChangeOptions>(config.GetSection("AnonChange"));
+
+        services.AddHttpClient<IAnonChangeClient, AnonChangeClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<AnonChangeOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(opt.BaseUrl)
+                ? "https://anonchange.com/api/partner/v1/"
+                : opt.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IAnonChangeClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IAnonChangeClient>());
 
         return services;
     }
