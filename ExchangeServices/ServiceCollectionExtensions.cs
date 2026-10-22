@@ -62,7 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSwapzone(config);  // instant-exchange aggregator (needs a partner API key)
         services.AddFlashift(config);  // instant-exchange aggregator (needs a Bearer API key; 10 req/min)
         services.AddElCapo(config);    // no-KYC instant exchange (needs a partner API key)
-        services.AddAnonChange(config); // no-KYC, own reserves (signed partner API)
+        services.AddAnonChange(config); // re-enabled 2026-10-21 after fixing the signature format (nonce + idempotency line)
         services.AddExplace(config);   // no-account instant swap, auto-routed (needs a partner API key)
         // services.AddSwapter(config); // removed — flagged as a scam on Monerica
 

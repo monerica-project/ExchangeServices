@@ -19,11 +19,13 @@ namespace ExchangeServices.Implementations;
 ///
 /// Auth: every request is signed. Headers X-API-KEY, X-API-TIMESTAMP (unix seconds),
 /// X-API-NONCE (single use), X-API-SIGN = hex HMAC-SHA256(secret,
-/// "{timestamp}\nPOST\n{path}\n{sha256hex(body)}"). Retries need a fresh nonce + timestamp.
+/// "{timestamp}\n{nonce}\nPOST\n{path}\n{idempotencyKey}\n{sha256hex(body)}"), where the
+/// idempotency key line is empty when no Idempotency-Key header is sent (we never send one: quotes
+/// only). Retries need a fresh nonce + timestamp. Format per https://anonchange.com/docs#authentication.
 ///
 /// AnonChange pays out from its own reserves: a quote whose amount is above maxDeposit can't
 /// actually be filled, so it's treated as unavailable (null) rather than shown.
-/// USDT is only on Ethereum/Solana (no Tron), so the XMR/USDT:Tron board gets no quote.
+/// USDT is only on Ethereum/Solana (no Tron); the XMR/USDT board is quoted with USDT_ETH.
 /// </summary>
 public sealed class AnonChangeClient : IAnonChangeClient
 {
@@ -119,7 +121,9 @@ public sealed class AnonChangeClient : IAnonChangeClient
     }
 
     // AnonChange coin codes: native tickers; USDT is per chain (USDT_ETH, USDT_SOL). No Tron.
-    private static string Coin(AssetRef a)
+    // Stablecoin boards accept whatever network works, so any network AnonChange doesn't
+    // offer (Tron, BSC, …) falls back to its Ethereum version (USDT_ETH has the reserve).
+    internal static string Coin(AssetRef a)
     {
         var ticker = (a.Ticker ?? string.Empty).Trim().ToUpperInvariant();
         if (ticker is not ("USDT" or "USDC" or "DAI")) return ticker;
@@ -129,11 +133,15 @@ public sealed class AnonChangeClient : IAnonChangeClient
         {
             "" or "ethereum" or "erc20" or "erc" or "eth" => ticker + "_ETH",
             "solana" or "sol" when ticker == "USDT" => "USDT_SOL",
-            _ => string.Empty, // Tron/BSC/… not offered
+            _ => ticker + "_ETH", // Tron/BSC/…: not offered, use the Ethereum version
         };
     }
 
     // ── signed HTTP ───────────────────────────────────────────────────────────
+    /// <summary>The exact string AnonChange signs: timestamp, nonce, method, path, idempotency key (empty), body hash.</summary>
+    internal static string BuildSignedString(string timestamp, string nonce, string path, string bodyHashHex, string idempotencyKey = "")
+        => $"{timestamp}\n{nonce}\nPOST\n{path}\n{idempotencyKey}\n{bodyHashHex}";
+
     private async Task<(HttpStatusCode? Status, string? Body)> SendAsync(string endpoint, string jsonBody, CancellationToken ct)
     {
         var attempts = Math.Max(1, Math.Clamp(opt.RetryCount, 0, 5) + 1);
@@ -150,7 +158,7 @@ public sealed class AnonChangeClient : IAnonChangeClient
             // Fresh timestamp + nonce on every attempt (a nonce works once).
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
             var nonce = Guid.NewGuid().ToString("N");
-            var signed = $"{ts}\nPOST\n{path}\n{bodyHash}";
+            var signed = BuildSignedString(ts, nonce, path, bodyHash);
             var sign = Convert.ToHexString(HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(signed))).ToLowerInvariant();
 
             using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
