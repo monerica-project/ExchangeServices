@@ -19,6 +19,7 @@ using Microsoft.Extensions.Logging;
 //   dotnet run -- currencies <key>     Fetch + print the currency catalog for one exchange
 //   dotnet run -- price <key>          Get the XMR->USDT sell (and buy) price for one exchange
 //   dotnet run -- price                Get the XMR->USDT sell price for ALL exchanges
+//   dotnet run -- price <key> BTC      Same, against BTC (or ETH) with board-sized probes
 //
 // <key> is the exchange's ExchangeKey, e.g. "exolix", "changenow", "bitcoinvn".
 
@@ -53,7 +54,7 @@ switch (command)
         break;
 
     case "price":
-        await PriceAsync(priceApis, key);
+        await PriceAsync(priceApis, key, args.Length > 2 ? args[2] : null);
         break;
 
     default:
@@ -112,10 +113,16 @@ static async Task CurrenciesAsync(List<IExchangeCurrencyApi> currencyApis, strin
         Console.WriteLine($"  ... and {currencies.Count - 40} more");
 }
 
-static async Task PriceAsync(List<IExchangePriceApi> priceApis, string? key)
+static async Task PriceAsync(List<IExchangePriceApi> priceApis, string? key, string? quoteTicker)
 {
-    // A representative pair available almost everywhere.
-    var query = new PriceQuery(new AssetRef("XMR"), new AssetRef("USDT", "Tron"));
+    // A representative pair available almost everywhere (USDT on Tron), or BTC / ETH.
+    var quote = (quoteTicker ?? "USDT").ToUpperInvariant();
+    var quoteRef = quote == "USDT" ? new AssetRef("USDT", "Tron") : new AssetRef(quote);
+
+    // Probes sized like the price board's ~$2,500 trade: XMR for sell, the quote coin for buy.
+    decimal? buyProbe = quote switch { "BTC" => 0.025m, "ETH" => 0.75m, _ => (decimal?)null };
+    var query = new PriceQuery(new AssetRef("XMR"), quoteRef, 7.5m);
+    var buyQuery = new PriceQuery(new AssetRef("XMR"), quoteRef, buyProbe);
 
     var targets = key is null
         ? priceApis.OrderBy(p => p.ExchangeKey).ToList()
@@ -127,13 +134,13 @@ static async Task PriceAsync(List<IExchangePriceApi> priceApis, string? key)
         return;
     }
 
-    Console.WriteLine($"XMR -> USDT price ({query.Key}):\n");
+    Console.WriteLine($"XMR -> {quote} price ({query.Key}):\n");
     foreach (var api in targets)
     {
         try
         {
             var sell = await api.GetSellPriceAsync(query);
-            var buy = api is IExchangeBuyPriceApi b ? await b.GetBuyPriceAsync(query) : null;
+            var buy = api is IExchangeBuyPriceApi b ? await b.GetBuyPriceAsync(buyQuery) : null;
             var sellStr = sell is null ? "n/a" : sell.Price.ToString("0.######");
             var buyStr = buy is null ? "n/a" : buy.Price.ToString("0.######");
             Console.WriteLine($"  {api.ExchangeKey,-16} sell={sellStr,14}  buy={buyStr,14}");

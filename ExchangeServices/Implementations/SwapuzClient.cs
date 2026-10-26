@@ -212,13 +212,20 @@ public sealed class SwapuzClient : ISwapuzClient
     // =========================
     // HELPERS
     // =========================
-    private static (string Ticker, string Network) ResolveTickerNetwork(AssetRef asset)
+    internal static (string Ticker, string Network) ResolveTickerNetwork(AssetRef asset)
     {
         var ticker = (asset.Ticker ?? "").Trim().ToUpperInvariant();
         var net = (asset.Network ?? "").Trim().ToUpperInvariant();
 
         if (ticker == "XMR") return ("XMR", XmrNetwork);
         if (ticker == "USDT") return ("USDT", UsdtNetwork);
+
+        // No network asked for = the coin's own chain (BTC on Bitcoin, ETH on Ethereum).
+        // Don't trust a catalog-resolved ExchangeId here: with no network the caller just takes
+        // the FIRST catalog match, and Swapuz lists wrapped coins too (BTC/ETH on Arbitrum sort
+        // first). Arbitrum BTC is withdraw-only, so XMR/BTC buys failed and the pair went
+        // one-sided (dropped from the board from 2026-10-20); ETH was quoting Arbitrum ETH.
+        if (string.IsNullOrWhiteSpace(net)) return (ticker, ticker);
 
         if (!string.IsNullOrWhiteSpace(asset.ExchangeId))
         {
