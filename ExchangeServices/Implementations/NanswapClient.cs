@@ -63,77 +63,28 @@ public sealed class NanswapClient : INanswapClient
     }
 
     // ==========================================
-    // BUY: ? USDT needed to receive ~1 XMR
-    // Nanswap reverse estimate is feeless-only,
-    // so we must do forward USDT->XMR and invert.
+    // BUY: quote currency needed per 1 XMR. Forward estimate quote → XMR at the
+    // board's probe size (ProbeSizing), then price = sent / received.
     // ==========================================
     public async Task<PriceResult?> GetBuyPriceAsync(PriceQuery query, CancellationToken ct = default)
     {
-        var usdtAsset = query.Quote; // USDTTRC
-        var xmrAsset = query.Base;   // XMR
+        var probe = ProbeSizing.BuyProbe(query, 2500m);
 
-        var fromKeyCandidates = GetKeyCandidates(usdtAsset);
-        var toKeyCandidates = GetKeyCandidates(xmrAsset);
-
-        var fromKeys = PreferExchangeIdFirst(fromKeyCandidates, usdtAsset.ExchangeId);
-        var toKeys = PreferExchangeIdFirst(toKeyCandidates, xmrAsset.ExchangeId);
-
-        foreach (var fromKey in fromKeys)
-            foreach (var toKey in toKeys)
+        foreach (var fromKey in PreferExchangeIdFirst(GetKeyCandidates(query.Quote), query.Quote.ExchangeId))
+            foreach (var toKey in PreferExchangeIdFirst(GetKeyCandidates(query.Base), query.Base.ExchangeId))
             {
-                // ✅ Step 1: ask Nanswap what amounts are valid for this pair
-                var limits = await GetLimitsAsync(fromKey, toKey, ct);
-                if (limits is null) continue;
+                var dto = await GetEstimateAsync(fromKey, toKey, probe, ct);
+                if (dto is null || dto.AmountTo <= 0) continue;
 
-                var min = limits.Min <= 0 ? 0.0001m : limits.Min;
-                var max = limits.Max.HasValue && limits.Max.Value > 0 ? limits.Max.Value : (decimal?)null;
-
-                // ✅ Step 2: pick a starting amount inside [min, max]
-                // - Start with something that usually clears mins for non-feeless pairs
-                // - Clamp to pair max if present
-                var startUsdt = 200m;
-                startUsdt = Math.Max(startUsdt, min);
-
-                if (max.HasValue)
-                    startUsdt = Math.Min(startUsdt, max.Value);
-
-                // If max < min (bad pair data), skip
-                if (max.HasValue && max.Value < min)
-                    continue;
-
-                // ✅ Step 3: forward estimate USDT -> XMR
-                var first = await GetEstimateAsync(fromKey, toKey, startUsdt, ct);
-                if (first is null || first.AmountTo <= 0) continue;
-
-                // USDT per XMR
-                var p1 = SafeDiv(startUsdt, first.AmountTo);
-                if (p1 <= 0) continue;
-
-                // ✅ Step 4: refine once using implied amount for ~1 XMR
-                // Use p1 as an estimate for "USDT needed for 1 XMR"
-                var refineUsdt = p1;
-
-                // clamp to limits
-                refineUsdt = Math.Max(refineUsdt, min);
-                if (max.HasValue)
-                    refineUsdt = Math.Min(refineUsdt, max.Value);
-
-                // If clamped refine == start, no need second call (but we can still do it)
-                var second = await GetEstimateAsync(fromKey, toKey, refineUsdt, ct);
-                if (second is null || second.AmountTo <= 0) continue;
-
-                var p2 = SafeDiv(refineUsdt, second.AmountTo);
-                if (p2 <= 0) continue;
-
+                var sent = dto.AmountFrom > 0 ? dto.AmountFrom : probe;
                 return new PriceResult(
                     Exchange: ExchangeKey,
                     Base: query.Base,
                     Quote: query.Quote,
-                    Price: p2,                           // USDT needed per 1 XMR (approx)
+                    Price: sent / dto.AmountTo,
                     TimestampUtc: DateTimeOffset.UtcNow,
                     CorrelationId: null,
-                    Raw: null
-                );
+                    Raw: null);
             }
 
         return null;
@@ -292,18 +243,23 @@ public sealed class NanswapClient : INanswapClient
         if (!string.IsNullOrWhiteSpace(asset.ExchangeId))
             yield return asset.ExchangeId;
 
-        if (!string.IsNullOrWhiteSpace(asset.Ticker))
-            yield return asset.Ticker.Trim().ToUpperInvariant();
-
-        // USDT Tron common keys on Nanswap
-        if (asset.Ticker.Equals("USDT", StringComparison.OrdinalIgnoreCase) &&
-            (asset.Network?.Equals("Tron", StringComparison.OrdinalIgnoreCase) ?? false))
+        var ticker = (asset.Ticker ?? "").Trim().ToUpperInvariant();
+        if (ticker == "USDT")
         {
-            yield return "USDT-TRX";     // most common
-            yield return "USDT-TRC20";
-            yield return "USDTTRC20";
-            yield return "USDT-TRON";
+            // Nanswap has no bare "USDT": each chain is its own code. Board USDT = Tron unless stated.
+            var n = (asset.Network ?? "").Trim().ToLowerInvariant();
+            yield return n switch
+            {
+                "ethereum" or "erc20" or "eth" => "USDT-ETH",
+                "solana" or "sol" => "USDT-SOL",
+                "binance smart chain" or "bsc" => "USDT-BSC",
+                _ => "USDT-TRX",
+            };
+            yield break;
         }
+
+        if (ticker.Length > 0)
+            yield return ticker;
     }
 
     private static string NormalizeNetwork(string? network)

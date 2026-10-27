@@ -71,13 +71,19 @@ public static class ServiceCollectionExtensions
 
 
 
-        // services.AddNanswap(config);
 
 
         //    services.AddWagyu(config);
         
         //  
         //    
+
+        services.AddMistex(config);    // keyless partner rates API (verified on Monerica, affiliate)
+        services.AddIronSwaps(config); // keyless quote call the site itself uses (verified, affiliate)
+        services.AddBetKarma(config);  // keyless public estimate API, fixed rate (verified, affiliate)
+        services.AddPlataSwap(config); // keyless quote API; partner key optional (verified, affiliate)
+        services.AddChainSwap(config); // keyless, homepage session + CSRF like the site's form (verified, affiliate)
+        services.AddNanswap(config);   // keyless estimates (verified, affiliate; Shotgun KYC → grade C)
 
         services.AddXChange(config);
 
@@ -112,6 +118,97 @@ public static class ServiceCollectionExtensions
                     s.PooledConnectionLifetime = ExchangePooledConnectionLifetime;
                 }
             }));
+
+        return services;
+    }
+
+    public static IServiceCollection AddMistex(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<MistexOptions>(config.GetSection("Mistex"));
+
+        services.AddHttpClient<IMistexClient, MistexClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<MistexOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IMistexClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IMistexClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddIronSwaps(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<IronSwapsOptions>(config.GetSection("IronSwaps"));
+
+        services.AddHttpClient<IIronSwapsClient, IronSwapsClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<IronSwapsOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IIronSwapsClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IIronSwapsClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddBetKarma(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<BetKarmaOptions>(config.GetSection("BetKarma"));
+
+        services.AddHttpClient<IBetKarmaClient, BetKarmaClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<BetKarmaOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IBetKarmaClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IBetKarmaClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddPlataSwap(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<PlataSwapOptions>(config.GetSection("PlataSwap"));
+
+        services.AddHttpClient<IPlataSwapClient, PlataSwapClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<PlataSwapOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IPlataSwapClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IPlataSwapClient>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddChainSwap(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<ChainSwapOptions>(config.GetSection("ChainSwap"));
+
+        services.AddHttpClient<IChainSwapClient, ChainSwapClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<ChainSwapOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseCookies = false, AllowAutoRedirect = false });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IChainSwapClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IChainSwapClient>());
 
         return services;
     }
@@ -977,8 +1074,10 @@ public static class ServiceCollectionExtensions
             });
 
         // Expose generics for your hub (IEnumerable<>)
-        services.AddTransient<IExchangeCurrencyApi>(sp => sp.GetRequiredService<INanswapClient>());
+        // No IExchangeCurrencyApi on purpose: the client maps tickers itself (USDT → USDT-TRX), and a
+        // catalog lookup without a network can pick the wrong chain.
         services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<INanswapClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<INanswapClient>());
 
         return services;
     }
