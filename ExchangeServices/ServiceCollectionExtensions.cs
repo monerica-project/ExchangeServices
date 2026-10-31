@@ -79,6 +79,7 @@ public static class ServiceCollectionExtensions
         //    
 
         services.AddMistex(config);    // keyless partner rates API (verified on Monerica, affiliate)
+        services.AddAlchimex(config);  // keyless rate API, fixed-rate batches (verified on Monerica, affiliate)
         services.AddIronSwaps(config); // keyless quote call the site itself uses (verified, affiliate)
         services.AddBetKarma(config);  // keyless public estimate API, fixed rate (verified, affiliate)
         services.AddPlataSwap(config); // keyless quote API; partner key optional (verified, affiliate)
@@ -118,6 +119,24 @@ public static class ServiceCollectionExtensions
                     s.PooledConnectionLifetime = ExchangePooledConnectionLifetime;
                 }
             }));
+
+        return services;
+    }
+
+    public static IServiceCollection AddAlchimex(this IServiceCollection services, IConfiguration config)
+    {
+        services.Configure<AlchimexOptions>(config.GetSection("Alchimex"));
+
+        services.AddHttpClient<IAlchimexClient, AlchimexClient>((sp, client) =>
+        {
+            var opt = sp.GetRequiredService<IOptions<AlchimexOptions>>().Value;
+            client.BaseAddress = new Uri(opt.BaseUrl.TrimEnd('/') + "/");
+            if (!string.IsNullOrWhiteSpace(opt.UserAgent))
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(opt.UserAgent);
+        });
+
+        services.AddTransient<IExchangePriceApi>(sp => sp.GetRequiredService<IAlchimexClient>());
+        services.AddTransient<IExchangeBuyPriceApi>(sp => sp.GetRequiredService<IAlchimexClient>());
 
         return services;
     }
