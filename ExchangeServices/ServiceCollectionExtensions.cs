@@ -80,7 +80,12 @@ public static class ServiceCollectionExtensions
 
         services.AddMistex(config);    // keyless partner rates API (verified on Monerica, affiliate)
         services.AddAlchimex(config);  // keyless rate API, fixed-rate batches (verified on Monerica, affiliate)
-        services.AddIronSwaps(config); // keyless quote call the site itself uses (verified, affiliate)
+        // Per-app switch (default on). MoneroPriceNow sets IronSwaps:Enabled=false: IronSwaps asked
+        // (2026-11-12) to stop polling their v1/rate API; owner decision: don't call them from MoneroPriceNow.
+        if (config.GetValue("IronSwaps:Enabled", true))
+        {
+            services.AddIronSwaps(config); // keyless quote call the site itself uses (verified, affiliate)
+        }
         services.AddBetKarma(config);  // keyless public estimate API, fixed rate (verified, affiliate)
         services.AddPlataSwap(config); // keyless quote API; partner key optional (verified, affiliate)
         services.AddChainSwap(config); // keyless, homepage session + CSRF like the site's form (verified, affiliate)
