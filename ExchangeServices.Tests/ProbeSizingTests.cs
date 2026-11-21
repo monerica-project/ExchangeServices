@@ -24,9 +24,9 @@ public class ProbeSizingTests
     [InlineData("LTC", 1)]
     public void BuyProbe_FallsBackPerQuoteCurrency_WhenNotSized(string quote, double expected)
     {
-        Assert.Equal((decimal)expected, ProbeSizing.BuyProbe(Q(quote, null), 500m));
-        Assert.Equal((decimal)expected, ProbeSizing.BuyProbe(Q(quote, 0m), 500m));
-        Assert.Equal((decimal)expected, ProbeSizing.BuyProbe(Q(quote, -3m), 500m));
+        Assert.Equal(DecimalConvert.FromDouble(expected), ProbeSizing.BuyProbe(Q(quote, null), 500m));
+        Assert.Equal(DecimalConvert.FromDouble(expected), ProbeSizing.BuyProbe(Q(quote, 0m), 500m));
+        Assert.Equal(DecimalConvert.FromDouble(expected), ProbeSizing.BuyProbe(Q(quote, -3m), 500m));
     }
 
     [Fact]

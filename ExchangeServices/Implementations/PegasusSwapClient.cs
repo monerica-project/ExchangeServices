@@ -100,7 +100,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
 
         if (dto is null) return null;
 
-        var quoteReceived = (decimal)dto.Receive;
+        var quoteReceived = DecimalConvert.FromDouble(dto.Receive);
         if (quoteReceived <= 0) return null;
 
         var unitRate = quoteReceived / probeAmount;
@@ -145,7 +145,7 @@ public sealed class PegasusSwapClient : IPegasusSwapClient
 
         if (dto is null) return null;
 
-        var xmrReceived = (decimal)dto.Receive;
+        var xmrReceived = DecimalConvert.FromDouble(dto.Receive);
         if (xmrReceived <= 0) return null;
 
         var usdtPerXmr = probeUsdt / xmrReceived;

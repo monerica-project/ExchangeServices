@@ -56,7 +56,7 @@ public sealed class OctoSwapClient : IOctoSwapClient
 
         if (dto is null || dto.Price <= 0) return null;
 
-        return Result(query, (decimal)dto.Price);
+        return Result(query, DecimalConvert.FromDouble(dto.Price));
     }
 
     // BUY: how much USDT(TRX) is needed to get 1 XMR
@@ -88,8 +88,8 @@ public sealed class OctoSwapClient : IOctoSwapClient
         if (dto is null || dto.Price <= 0) return null;
 
         // Clamp probe within min/max if the API told us the limits
-        var minDep = (decimal)dto.MinDeposit;
-        var maxDep = (decimal)dto.MaxDeposit;
+        var minDep = DecimalConvert.FromDouble(dto.MinDeposit);
+        var maxDep = DecimalConvert.FromDouble(dto.MaxDeposit);
         var clamped = probe;
         if (minDep > 0 && clamped < minDep) clamped = minDep * 1.1m;
         if (maxDep > 0 && clamped > maxDep) clamped = maxDep * 0.9m;
@@ -109,7 +109,7 @@ public sealed class OctoSwapClient : IOctoSwapClient
         }
 
         // dto.Price = total XMR received for `probe` USDT
-        var buyPrice = probe / (decimal)dto.Price;
+        var buyPrice = probe / DecimalConvert.FromDouble(dto.Price);
         if (buyPrice <= 0) return null;
 
         return Result(query, buyPrice);
